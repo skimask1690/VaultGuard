@@ -721,6 +721,16 @@ IoctlAddPath proc
     lea     rcx, [rdi + 4]                      ; append to NT prefix
     call    wcscat_p
 
+    ; Strip trailing backslash — driver prefix match requires path[len] == '\' or 0, not stored '\'
+    lea     rcx, [rdi + 4]
+    call    wcslen_p
+    test    eax, eax
+    jz      @iap_do_size
+    dec     eax
+    cmp     word ptr [rdi + 4 + rax*2], '\'
+    jne     @iap_do_size
+    mov     word ptr [rdi + 4 + rax*2], 0
+@iap_do_size:
     lea     rcx, [rdi + 4]
     call    wcslen_p
     lea     rbx, [rax*2 + 6]     ; total input size: DWORD flags + path WCHARs + null
@@ -784,6 +794,15 @@ IoctlRemovePath proc
     lea     rcx, [rdi + 4]
     call    wcscat_p
 
+    lea     rcx, [rdi + 4]
+    call    wcslen_p
+    test    eax, eax
+    jz      @irp_do_size
+    dec     eax
+    cmp     word ptr [rdi + 4 + rax*2], '\'
+    jne     @irp_do_size
+    mov     word ptr [rdi + 4 + rax*2], 0
+@irp_do_size:
     lea     rcx, [rdi + 4]
     call    wcslen_p
     lea     rbx, [rax*2 + 6]     ; DWORD reserved + path bytes + null WCHAR
