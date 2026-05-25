@@ -142,7 +142,6 @@ MainWndProc proc
     cmp     edi, TIMER_STATUS_ID            ; ignore any other timer id
     jne     @wnd_not_timer
     call    UpdateStatusBar                 ; poll IOCTL → update title / labels
-    call    RefreshLists                    ; repopulate both ListViews
     xor     eax, eax
     jmp     @wnd_ret
 

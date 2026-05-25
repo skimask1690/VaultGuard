@@ -562,10 +562,16 @@ _OnNotify proc
     mov     rcx, g_hwndLvPaths
     call    _LvGetItemText
 
-    ; First flag on a pending row: row is now real; clear pending marker
-    cmp     dword ptr [rsp + 40h], 0
-    jne     @on_not_pending             ; row was already active
-    mov     word ptr [g_pendingPath], 0 ; clear so RefreshLists stops re-adding it
+    ; Clear pending marker only when this row's path matches g_pendingPath
+    ; (lParam==0 is not a reliable sentinel: registry entries with flags=0 also have lParam=0)
+    cmp     word ptr [g_pendingPath], 0
+    je      @on_not_pending
+    lea     rdx, lv_text_buf
+    lea     rcx, g_pendingPath
+    call    wcscmp_ci
+    test    eax, eax
+    jnz     @on_not_pending
+    mov     word ptr [g_pendingPath], 0
 @on_not_pending:
 
     call    EnsureDriverReady

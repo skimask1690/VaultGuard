@@ -98,14 +98,14 @@ $OK        = $true
 #
 # The loader reads the icon, seeks past the header and expands the CAB
 # to recover vg.sys at install time.  $HeaderBytes must match exactly
-# what the loader expects (1662 = standard single-image .ico header).
+# what the loader expects (1078 = standard single-image .ico header).
 
 function Build-DriverIcon {
     param(
         [string] $DriverPath,
         [string] $BaseIcon,
         [string] $OutIcon,
-        [int]    $HeaderBytes = 1662
+        [int]    $HeaderBytes = 1078
     )
 
     foreach ($f in $DriverPath, $BaseIcon) {
@@ -194,7 +194,7 @@ try {
         }
     } elseif ($OK) {
         Write-Banner '[1] Compiling resources'
-        & rc /c65001 /I "$SdkInclude\um" /I "$SdkInclude\shared" /fo vg.res vg.rc
+        & rc /c65001 /I "$SdkInclude\um" /I "$SdkInclude\shared" /fo vg.res x64\vg.rc
         if ($LASTEXITCODE -ne 0) {
             Write-Host 'ERROR: rc.exe failed' -ForegroundColor Red
             $OK = $false
@@ -233,7 +233,7 @@ try {
             '/Brepro' `
             '/out:bin\vg.exe' `
             '/MANIFEST:EMBED' `
-            '/MANIFESTINPUT:vg.manifest' `
+            '/MANIFESTINPUT:x64\vg.manifest' `
             "/MANIFESTUAC:level='requireAdministrator' uiAccess='false'" `
             "/LIBPATH:$LibPath" `
             'kernel32.lib' 'user32.lib'  'advapi32.lib' 'shell32.lib' `

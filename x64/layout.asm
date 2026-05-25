@@ -49,7 +49,7 @@ str_btn_restore     dw 'R','e','m','o','v','e',' ','s','e','l','e','c','t','e','
 str_btn_add_proc    dw 'A','d','d',0
 str_btn_remove_proc dw 'R','e','m','o','v','e',0
 
-str_hdr_paths       dw 'P','r','o','t','e','c','t','e','d',' ','f','o','l','d','e','r','s',0
+str_hdr_paths       dw 'P','r','o','t','e','c','t','e','d',' ','f','i','l','e','s','/','f','o','l','d','e','r','s',0
 str_hdr_trusted     dw 'A','l','l','o','w','e','d',' ','a','p','p','s',' ','(','t','r','u','s','t','e','d',')',0
 
 str_col_path        dw 'P','a','t','h',0

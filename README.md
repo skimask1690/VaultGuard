@@ -319,7 +319,7 @@ Reverse-engineered IOCTL codes for `vg.sys`:
 
 Device path: `\\.\BE79F7D853E643089D51EDCDA79805C4`
 
-`vg.sys` is embedded inside `vg.exe` as a resource — an LZX CAB appended after the first 1662 bytes of an ICO file header, extracted at install time via FDI (`cabinet.lib`, no temp files on disk during extraction).
+`vg.sys` is embedded inside `vg.exe` as a resource — an LZX CAB appended after the first 1078 bytes of an ICO file header, extracted at install time via FDI (`cabinet.lib`, no temp files on disk during extraction).
 
 ---
 
@@ -501,7 +501,7 @@ Every exit path goes through `_CliFinish(code)` → `ConsoleSendEnter()` (inject
 The driver `vg.sys` is embedded inside `vg.exe` as a resource: an LZX CAB appended to the ICO file header.
 
 1. `FindResourceW(NULL, IDR_DRIVER=102, RT_RCDATA=10)` → resource pointer
-2. `LockResource` → raw bytes; CAB starts at offset **1662 bytes**
+2. `LockResource` → raw bytes; CAB starts at offset **1078 bytes**
 3. All FDI callbacks operate in memory — no temp files on disk
 4. `FDICopy` → heap buffer → `WriteFile` to `%SystemRoot%\system32\drivers\vg.sys`
 
@@ -547,7 +547,7 @@ Requires Visual Studio with MASM x64 toolchain (auto-detected via `vswhere.exe`)
 
 Build steps:
 ```
-[0] makecab IcoBuilder\vg.sys → LZX CAB → prepend 1662 B ICO header → ICON\vg.ico
+[0] makecab IcoBuilder\vg.sys → LZX CAB → prepend 1078 B ICO header → ICON\vg.ico
 [1] rc.exe /c65001 vg.rc → vg.res
 [2] ml64.exe /c /Cp /Cx /Zi  (strutil res driver config cli theme listview handlers drop layout window main)
 [3] link.exe /SUBSYSTEM:WINDOWS /NODEFAULTLIB /MANIFEST:EMBED /MANIFESTUAC:requireAdministrator

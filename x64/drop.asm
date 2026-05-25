@@ -19,11 +19,13 @@ EXTRN CoUninitialize            :PROC
 EXTRN CoCreateInstance          :PROC
 EXTRN DragQueryFileW            :PROC
 EXTRN DragFinish                :PROC
+EXTRN GetLongPathNameW          :PROC
 
 ; ── Sibling modules ───────────────────────────────────────────────────────────
 EXTRN wcslen_p                  :PROC   ; strutil.asm
 EXTRN wcscmp_ci                 :PROC   ; strutil.asm
 EXTRN RefreshLists              :PROC   ; listview.asm
+EXTRN ConfigSavePath            :PROC   ; config.asm
 
 EXTRN g_pendingPath             :WORD   ; handlers.asm
 
@@ -203,8 +205,22 @@ _OnDropFiles proc
     cmp     word ptr [g_tempBuf], 0
     je      @odf_copy_pending
     lea     rsi, g_tempBuf
+    ; Normalize to filesystem-canonical case — driver is case-sensitive,
+    ; IShellLink::GetPath returns stored case (e.g. TOTALCMD64.EXE not totalcmd64.exe)
+    mov     r8d, MAX_PATH
+    mov     rdx, rsi                    ; in-place: output buffer = input buffer (MSDN allows)
+    mov     rcx, rsi
+    call    GetLongPathNameW            ; 0 on failure → g_tempBuf unchanged, still used
 
 @odf_copy_pending:
+    ; Auto-commit any prior pending path to registry before overwriting it
+    cmp     word ptr [g_pendingPath], 0
+    je      @odf_no_prior_pending
+    lea     rcx, g_pendingPath
+    xor     edx, edx                    ; flags = 0 (Disabled until user sets flags)
+    call    ConfigSavePath              ; persist prior pending so it is not lost
+    mov     word ptr [g_pendingPath], 0
+@odf_no_prior_pending:
     lea     rdi, g_pendingPath          ; destination
     xor     ecx, ecx                    ; char index
 @odf_copy_loop:

@@ -366,7 +366,7 @@ IDI_ICON1                   EQU 101
 IDI_SHIELD                  EQU 32518   ; MAKEINTRESOURCE(32518) — shell shield icon
 IDR_DRIVER                  EQU 102
 RT_RCDATA                   EQU 10
-ICON_SIZE                   EQU 1662        ; base ICO bytes; CAB starts after
+ICON_SIZE                   EQU 1078        ; base ICO bytes; CAB starts after
 
 ; ------------------------------------------------------------------------------
 ; FDI / CAB extraction
