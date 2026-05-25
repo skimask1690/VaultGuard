@@ -1,0 +1,28 @@
+# Skrypty lokalne (automatyzacja, release)
+git-push.sh
+pack-data.sh
+release-now.sh
+release-now.md
+
+# Pliki środowiskowe
+.env
+.env.*
+
+# Release files
+*.7z
+*.zip
+
+# Binarki i build output
+bin/
+x64/*.obj
+x64/*.pdb
+*.res
+
+# Wygenerowany ICO (build step 0: IcoBuilder/vg.sys → ICON/vg.ico)
+ICON/vg.ico
+
+# Merge helper
+x64/merge.ps1
+
+# Katalogi z danymi
+data/
