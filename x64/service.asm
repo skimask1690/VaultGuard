@@ -34,6 +34,7 @@ EXTRN GetModuleFileNameW         :PROC
 EXTRN RegisterServiceCtrlHandlerExW :PROC
 EXTRN SetServiceStatus           :PROC
 EXTRN StartServiceCtrlDispatcherW :PROC
+EXTRN ChangeServiceConfig2W      :PROC
 EXTRN CreateEventW               :PROC
 EXTRN WaitForSingleObject        :PROC
 EXTRN SetEvent                   :PROC
@@ -61,6 +62,9 @@ EXTRN _CliFinish                 :PROC
 ; SCM service name (short, no spaces) and display name shown in services.msc
 svc_name        dw 'V','a','u','l','t','G','u','a','r','d',0
 svc_display     dw 'V','a','u','l','t',' ','G','u','a','r','d',0
+svc_description dw 'P','r','o','t','e','c','t','s',' ','f','o','l','d','e','r','s',' ','a','n','d'
+                dw ' ','f','i','l','e','s',' ','v','i','a',' ','k','e','r','n','e','l',' '
+                dw 'F','S','F','i','l','t','e','r',' ','m','i','n','i','f','i','l','t','e','r','.',0
 
 ; Result messages (follow project convention: "Verb done." / "Error: reason.")
 msg_ok_svc_inst     dw 'S','e','r','v','i','c','e',' ','i','n','s','t','a','l','l','e','d','.',0
@@ -177,6 +181,15 @@ _CliServiceInstall proc
     test    rax, rax
     jz      @csi_create_err
     mov     rsi, rax                    ; rsi = hSvc
+
+    ; ── Set service description (SERVICE_CONFIG_DESCRIPTION = 1) ─────────────
+    ; SERVICE_DESCRIPTIONW = { LPWSTR lpDescription } — one pointer, placed in shadow slot
+    lea     rax, svc_description
+    mov     qword ptr [rsp+20h], rax    ; SERVICE_DESCRIPTIONW.lpDescription
+    lea     r8, [rsp+20h]               ; lpInfo → SERVICE_DESCRIPTIONW on stack
+    mov     edx, 1                      ; SERVICE_CONFIG_DESCRIPTION
+    mov     rcx, rsi                    ; hSvc
+    call    ChangeServiceConfig2W       ; best-effort; ignore return value
 
     ; ── Start the service immediately (best-effort; ignore return value) ─────
     xor     r8d, r8d                    ; lpServiceArgVectors = NULL
