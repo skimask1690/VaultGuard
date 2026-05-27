@@ -98,7 +98,7 @@ $OK        = $true
 #
 # The loader reads the icon, seeks past the header and expands the CAB
 # to recover vg.sys at install time.  $HeaderBytes must match exactly
-# what the loader expects (1078 = standard single-image .ico header).
+# what the loader expects (1662 = standard single-image .ico header).
 
 function Build-DriverIcon {
     param(
@@ -203,7 +203,7 @@ try {
 
     # ── Step 2: Assemble ──────────────────────────────────────────────────────
 
-    $Modules = @('strutil', 'res', 'driver', 'config', 'cli', 'theme', 'listview', 'handlers', 'drop', 'layout', 'window', 'main')
+    $Modules = @('strutil', 'res', 'driver', 'config', 'cli', 'export', 'service', 'theme', 'listview', 'handlers', 'drop', 'tray', 'layout', 'window', 'main')
 
     if ($OK) {
         Write-Banner '[2] Assembling modules'

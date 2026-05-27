@@ -25,6 +25,7 @@ EXTRN LocalFree             :PROC
 
 EXTRN CreateMainWindow      :PROC
 EXTRN CliDispatch           :PROC
+EXTRN _TrayAdd              :PROC
 
 ; ==============================================================================
 ; INITIALIZED DATA
@@ -43,6 +44,7 @@ PUBLIC g_isDarkMode
 PUBLIC g_driverInstalled, g_driverRunning, g_protActive
 PUBLIC g_cliMode
 PUBLIC g_prevDrvOk, g_prevProtActive
+PUBLIC g_startMinimized
 
 g_hInstance         dq 0
 g_hwndMain          dq 0
@@ -64,6 +66,8 @@ g_driverRunning     dd 0
 g_protActive        dd 0
                     dd 0
 g_cliMode           dd 0
+                    dd 0
+g_startMinimized    dd 0
                     dd 0
 ; State cache for UpdateStatusBar — prevents flicker on unchanged labels.
 ; 0xFF = sentinel "never set", forces update on first call.
@@ -181,6 +185,11 @@ mode_gui proc
     call    CreateMainWindow        ; register class, create window, show
     test    rax, rax
     jz      @mg_exit                ; NULL = creation failed, exit cleanly
+
+    cmp     g_startMinimized, 0
+    je      @mg_loop
+    mov     rcx, rax                ; hwnd
+    call    _TrayAdd                ; /tray flag: hide to tray immediately
 
 @mg_loop:
     lea     rcx, [rsp+20h]          ; lpMsg

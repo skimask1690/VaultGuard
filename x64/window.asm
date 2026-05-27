@@ -32,6 +32,8 @@ EXTRN SetBkMode                 :PROC
 EXTRN SetBkColor                :PROC
 EXTRN SetTextColor              :PROC
 EXTRN InvalidateRect            :PROC
+EXTRN GetKeyState               :PROC
+EXTRN RegisterWindowMessageW    :PROC
 
 ; ── Sibling modules ───────────────────────────────────────────────────────────
 EXTRN _ReadDarkMode             :PROC   ; theme.asm
@@ -43,14 +45,26 @@ EXTRN RefreshLists              :PROC   ; listview.asm
 EXTRN UpdateStatusBar           :PROC   ; handlers.asm
 EXTRN _OnCommand                :PROC   ; handlers.asm
 EXTRN _OnNotify                 :PROC   ; handlers.asm
+EXTRN _TrayAdd                  :PROC   ; tray.asm
+EXTRN _TrayRemove               :PROC   ; tray.asm
+EXTRN _OnTrayMsg                :PROC   ; tray.asm
 
 ; ==============================================================================
 ; CONSTANT STRINGS  (owned by this module)
 ; ==============================================================================
 .const
 
-str_wndclass    dw 'V','G','M','a','i','n','W','n','d',0
-str_title       dw 'V','a','u','l','t','G','u','a','r','d',0
+str_wndclass        dw 'V','G','M','a','i','n','W','n','d',0
+str_title           dw 'V','a','u','l','t','G','u','a','r','d',0
+str_taskbarcreated  dw 'T','a','s','k','b','a','r','C','r','e','a','t','e','d',0
+
+; ==============================================================================
+; MUTABLE DATA
+; ==============================================================================
+.data
+    align 4
+PUBLIC g_wmTaskbarCreated
+    g_wmTaskbarCreated  dd 0    ; message ID from RegisterWindowMessageW("TaskbarCreated")
 
 ; ==============================================================================
 ; CODE
@@ -86,6 +100,9 @@ MainWndProc proc
     cmp     esi, WM_DESTROY
     jne     @wnd_not_destroy
 
+    mov     rcx, rbx
+    call    _TrayRemove                     ; remove tray icon if visible
+
     mov     edx, TIMER_STATUS_ID
     mov     rcx, rbx
     call    KillTimer                       ; stop periodic refresh
@@ -111,10 +128,34 @@ MainWndProc proc
     jmp     @wnd_ret
 
 @wnd_not_close:
+    cmp     esi, WM_SIZE
+    jne     @wnd_not_size
+    cmp     edi, SIZE_MINIMIZED             ; wParam = 1 when minimized
+    jne     @wnd_not_size
+    mov     ecx, VK_SHIFT
+    call    GetKeyState
+    test    ax, 8000h                       ; high bit = key currently pressed
+    jz      @wnd_not_size
+    mov     rcx, rbx
+    call    _TrayAdd                        ; Shift+Minimize → hide to tray
+    xor     eax, eax
+    jmp     @wnd_ret
+
+@wnd_not_size:
+    cmp     esi, WM_TRAY
+    jne     @wnd_not_tray
+    mov     rdx, r12                        ; lParam = mouse event
+    mov     rcx, rbx
+    call    _OnTrayMsg
+    xor     eax, eax
+    jmp     @wnd_ret
+
+@wnd_not_tray:
     cmp     esi, WM_DROPFILES
     jne     @wnd_not_dropfiles
+    mov     rdx, rbx                        ; hMainWnd (for drop target detection)
     mov     rcx, rdi                        ; wParam = HDROP handle
-    call    _OnDropFiles                    ; resolves .lnk, sets pending path
+    call    _OnDropFiles                    ; resolves .lnk, routes by drop target
     xor     eax, eax
     jmp     @wnd_ret
 
@@ -146,6 +187,20 @@ MainWndProc proc
     jmp     @wnd_ret
 
 @wnd_not_timer:
+    ; TaskbarCreated: Explorer restarted → re-add tray icon if we were in tray mode
+    mov     eax, g_wmTaskbarCreated
+    test    eax, eax
+    jz      @wnd_not_taskbar
+    cmp     esi, eax
+    jne     @wnd_not_taskbar
+    cmp     g_startMinimized, 0
+    je      @wnd_not_taskbar
+    mov     rcx, rbx
+    call    _TrayAdd
+    xor     eax, eax
+    jmp     @wnd_ret
+
+@wnd_not_taskbar:
     cmp     esi, WM_SETTINGCHANGE
     jne     @wnd_not_setting
     call    _ReadDarkMode                   ; re-read AppsUseLightTheme registry val
@@ -222,6 +277,12 @@ CreateMainWindow proc
     push    rsi
     sub     rsp, 78h
 
+    ; Register "TaskbarCreated" message so WndProc can re-add tray icon
+    ; if Explorer restarts (e.g. crash, logon race condition at startup).
+    lea     rcx, str_taskbarcreated
+    call    RegisterWindowMessageW
+    mov     g_wmTaskbarCreated, eax
+
     ; Zero WNDCLASSEXW at [rsp+20h]
     lea     r10, [rsp+20h]                  ; struct base on stack
     xor     eax, eax
@@ -274,6 +335,10 @@ CreateMainWindow proc
     mov     dword ptr [rsp+28h], 080000000h     ; Y = CW_USEDEFAULT
     mov     dword ptr [rsp+20h], 080000000h     ; X = CW_USEDEFAULT
     mov     r9d, (STY_MAINWIN + WS_CLIPCHILDREN)
+    cmp     g_startMinimized, 0
+    je      @cmw_style_ok
+    and     r9d, NOT WS_VISIBLE                 ; /tray: create hidden, no flash
+@cmw_style_ok:
     lea     r8, str_title                       ; lpWindowName
     lea     rdx, str_wndclass                   ; lpClassName
     xor     ecx, ecx                            ; dwExStyle = 0
@@ -283,6 +348,9 @@ CreateMainWindow proc
 
     mov     rbx, rax
 
+    cmp     g_startMinimized, 0
+    jne     @cmw_tray           ; /tray: _TrayAdd in mode_gui will handle show
+
     mov     edx, SW_SHOWNORMAL
     mov     rcx, rbx
     call    ShowWindow
@@ -290,6 +358,7 @@ CreateMainWindow proc
     mov     rcx, rbx
     call    UpdateWindow
 
+@cmw_tray:
     mov     rax, rbx
     jmp     @cmw_ret
 

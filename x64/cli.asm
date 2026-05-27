@@ -23,12 +23,11 @@ include consts.inc
 include globals.inc
 
 EXTRN ExitProcess           :PROC
-EXTRN CreateFileW           :PROC
-EXTRN WriteFile             :PROC
 EXTRN CloseHandle           :PROC
-EXTRN RegOpenKeyExW         :PROC
-EXTRN RegEnumValueW         :PROC
-EXTRN RegCloseKey           :PROC
+EXTRN GetModuleFileNameW    :PROC
+EXTRN CreateProcessW        :PROC
+EXTRN WaitForSingleObject   :PROC
+EXTRN GetExitCodeProcess    :PROC
 
 EXTRN OpenDevice            :PROC
 EXTRN EnsureDriverReady     :PROC
@@ -47,6 +46,13 @@ EXTRN wcscmp_ci             :PROC
 EXTRN wcs_ascii_lower_inplace :PROC
 EXTRN WideWriteLn           :PROC
 EXTRN ConsoleSendEnter      :PROC
+
+EXTRN _CliServiceInstall    :PROC
+EXTRN _CliServiceUninstall  :PROC
+EXTRN _SvcStart             :PROC
+
+EXTRN _CliEnumItems         :PROC
+EXTRN _CliEnumTrusted       :PROC
 
 EXTRN ConfigSavePath        :PROC
 EXTRN ConfigRemovePath      :PROC
@@ -68,6 +74,12 @@ sw_help_dash_h dw '-','h',0
 sw_help_ddash_h dw '-','-','h',0
 sw_help_dash_help dw '-','h','e','l','p',0
 sw_help_ddash_help dw '-','-','h','e','l','p',0
+sw_service      dw '/','s','e','r','v','i','c','e',0
+str_install     dw 'i','n','s','t','a','l','l',0
+str_uninstall   dw 'u','n','i','n','s','t','a','l','l',0
+sw_svcstart     dw '/','s','v','c','s','t','a','r','t',0
+sw_tray         dw '/','t','r','a','y',0
+sw_autostart    dw '/','a','u','t','o','s','t','a','r','t',0
 sw_enumitems    dw '/','e','n','u','m','i','t','e','m','s',0
 sw_enumtrusted  dw '/','e','n','u','m','t','r','u','s','t','e','d',0
 sw_protection   dw '/','p','r','o','t','e','c','t','i','o','n',0
@@ -82,21 +94,36 @@ str_hidden      dw 'H','i','d','d','e','n',0
 str_locked      dw 'L','o','c','k','e','d',0
 str_readonly    dw 'R','e','a','d','-','o','n','l','y',0
 str_noexec      dw 'N','o','-','e','x','e','c','u','t','i','o','n',0
-str_key_paths_cli dw 'S','o','f','t','w','a','r','e','\','V','G','\','P','a','t','h','s',0
-str_key_trusted_cli dw 'S','o','f','t','w','a','r','e','\','V','G','\','T','r','u','s','t','e','d',0
-
-; CSV content
-w_bom             dw 0FEFFh
-w_comma           dw ','
-w_crlf            dw 13,10
-w_one             dw '1'
-w_zero            dw '0'
-
-str_csv_paths_hdr dw 'P','a','t','h',',','H','i','d','d','e','n',','
-                  dw 'L','o','c','k','e','d',',','R','e','a','d','O','n','l','y',','
-                  dw 'N','o','E','x','e','c',13,10,0
-
-str_csv_trust_hdr dw 'A','p','p','l','i','c','a','t','i','o','n',13,10,0
+; schtasks command line fragments for _CliAutostart
+; "on" prefix up to and including the opening \" of the /tr value:
+;   schtasks.exe /create /f /sc onlogon /rl highest /tn VaultGuard /tr "\"
+str_scht_on_pre dw 's','c','h','t','a','s','k','s','.','e','x','e',' '
+                dw '/','c','r','e','a','t','e',' ','/','f',' '
+                dw '/','s','c',' ','o','n','l','o','g','o','n',' '
+                dw '/','r','l',' ','h','i','g','h','e','s','t',' '
+                dw '/','t','n',' ','V','a','u','l','t','G','u','a','r','d',' '
+                dw '/','t','r',' ',22h,5Ch,22h,0
+; "on" suffix appended after <exepath>: \" /tray"
+str_scht_on_suf dw 5Ch,22h,' ','/','t','r','a','y',22h,0
+; "off" full command: schtasks.exe /delete /f /tn VaultGuard
+str_scht_off    dw 's','c','h','t','a','s','k','s','.','e','x','e',' '
+                dw '/','d','e','l','e','t','e',' ','/','f',' '
+                dw '/','t','n',' ','V','a','u','l','t','G','u','a','r','d',0
+; powershell command to strip battery restrictions from the task (best-effort):
+;   powershell.exe -NonInteractive -Command "Set-ScheduledTask -TaskName VaultGuard
+;       -Settings (New-ScheduledTaskSettingsSet -DisallowStartIfOnBatteries:$false
+;                  -StopIfGoingOnBatteries:$false)"
+str_ps_battery  dw 'p','o','w','e','r','s','h','e','l','l','.','e','x','e',' '
+                dw '-','N','o','n','I','n','t','e','r','a','c','t','i','v','e',' '
+                dw '-','C','o','m','m','a','n','d',' ',22h
+                dw 'S','e','t','-','S','c','h','e','d','u','l','e','d','T','a','s','k',' '
+                dw '-','T','a','s','k','N','a','m','e',' ','V','a','u','l','t','G','u','a','r','d',' '
+                dw '-','S','e','t','t','i','n','g','s',' '
+                dw '(','N','e','w','-','S','c','h','e','d','u','l','e','d','T','a','s','k','S','e','t','t','i','n','g','s','S','e','t',' '
+                dw '-','D','i','s','a','l','l','o','w','S','t','a','r','t','I','f','O','n','B','a','t','t','e','r','i','e','s',':'
+                dw 24h,'f','a','l','s','e',' '
+                dw '-','S','t','o','p','I','f','G','o','i','n','g','O','n','B','a','t','t','e','r','i','e','s',':'
+                dw 24h,'f','a','l','s','e',')',22h,0
 
 ; Help lines
 msg_h1  dw 'V','a','u','l','t','G','u','a','r','d',' ','C','L','I',0
@@ -106,6 +133,9 @@ msg_h4  dw 0
 msg_h5  dw 'C','o','m','m','a','n','d','s',':',0
 msg_h6  dw ' ',' ','/',63,',',' ','/','h',',',' ','/','h','e','l','p',',',' ','-','h',',',' ','-','-','h',',',' ','-','h','e','l','p',',',' ','-','-','h','e','l','p',0
 msg_h7  dw ' ',' ',' ',' ','S','h','o','w',' ','t','h','i','s',' ','h','e','l','p',' ','s','c','r','e','e','n','.',0
+msg_h_sv1 dw ' ',' ','/','s','e','r','v','i','c','e',' ','i','n','s','t','a','l','l','|','u','n','i','n','s','t','a','l','l',0
+msg_h_sv2 dw ' ',' ',' ',' ','R','e','g','i','s','t','e','r',' ','o','r',' ','r','e','m','o','v','e',' '
+          dw 'v','g','.','e','x','e',' ','a','s',' ','a',' ','W','i','n','d','o','w','s',' ','s','e','r','v','i','c','e','.',0
 msg_h8  dw ' ',' ','/','e','n','u','m','i','t','e','m','s',' ','<','f','i','l','e','>',0
 msg_h9  dw ' ',' ',' ',' ','E','x','p','o','r','t',' ','p','r','o','t','e','c','t','e','d',' ','f','o','l','d','e','r','s',' ','t','o',' ','C','S','V','.',0
 msg_h10 dw ' ',' ','/','e','n','u','m','t','r','u','s','t','e','d',' ','<','f','i','l','e','>',0
@@ -118,36 +148,33 @@ msg_h15 dw ' ',' ',' ',' ','M','o','d','e','s',':',' ','H','i','d','d','e','n','
         dw ' ','D','i','s','a','b','l','e','d','.',0
 msg_h16 dw ' ',' ','/','s','e','t','t','r','u','s','t','e','d',' ','<','n','a','m','e','>',' ','<','m','o','d','e','>',0
 msg_h17 dw ' ',' ',' ',' ','M','o','d','e','s',':',' ','E','n','a','b','l','e','d',',',' ','D','i','s','a','b','l','e','d','.',0
-msg_h18 dw 0
-msg_h19 dw 'E','x','a','m','p','l','e','s',':',0
-msg_h20 dw ' ',' ','v','g','.','e','x','e',' ','/','s','e','t','i','t','e','m',' ','"','C',':','\','t','e','m','p','\','a','a','a','"',' ','H','i','d','d','e','n',0
-msg_h21 dw ' ',' ','v','g','.','e','x','e',' ','/','s','e','t','i','t','e','m',' ','"','C',':','\','t','e','m','p','\','a','a','a','"',' ','D','i','s','a','b','l','e','d',0
-msg_h22 dw ' ',' ','v','g','.','e','x','e',' ','/','s','e','t','t','r','u','s','t','e','d',' ','n','o','t','e','p','a','d','.','e','x','e',' ','E','n','a','b','l','e','d',0
-msg_h23 dw ' ',' ','v','g','.','e','x','e',' ','/','e','n','u','m','i','t','e','m','s',' ','i','t','e','m','s','.','c','s','v',0
+msg_h18 dw ' ',' ','/','t','r','a','y',0
+msg_h19 dw ' ',' ',' ',' ','S','t','a','r','t',' ','m','i','n','i','m','i','z','e','d',' ','t','o',' ','s','y','s','t','e','m',' ','t','r','a','y','.',0
+msg_h_as1 dw ' ',' ','/','a','u','t','o','s','t','a','r','t',' ','o','n','|','o','f','f',0
+msg_h_as2 dw ' ',' ',' ',' ','R','e','g','i','s','t','e','r',' ','o','r',' ','r','e','m','o','v','e',' ','a','u','t','o','s','t','a','r','t',' ','e','n','t','r','y',' ','(','/','t','r','a','y',')','.', 0
+msg_h20 dw 0
+msg_h21 dw 'E','x','a','m','p','l','e','s',':',0
+msg_h22 dw ' ',' ','v','g','.','e','x','e',' ','/','s','e','t','i','t','e','m',' ','"','C',':','\','t','e','m','p','\','a','a','a','"',' ','H','i','d','d','e','n',0
+msg_h23 dw ' ',' ','v','g','.','e','x','e',' ','/','s','e','t','i','t','e','m',' ','"','C',':','\','t','e','m','p','\','a','a','a','"',' ','D','i','s','a','b','l','e','d',0
+msg_h24 dw ' ',' ','v','g','.','e','x','e',' ','/','s','e','t','t','r','u','s','t','e','d',' ','n','o','t','e','p','a','d','.','e','x','e',' ','E','n','a','b','l','e','d',0
+msg_h25 dw ' ',' ','v','g','.','e','x','e',' ','/','e','n','u','m','i','t','e','m','s',' ','i','t','e','m','s','.','c','s','v',0
+msg_h26 dw ' ',' ','v','g','.','e','x','e',' ','/','t','r','a','y',0
 
+msg_ok_autostart_on  dw 'A','u','t','o','s','t','a','r','t',' ','e','n','a','b','l','e','d','.',0
+msg_ok_autostart_off dw 'A','u','t','o','s','t','a','r','t',' ','d','i','s','a','b','l','e','d','.',0
+msg_err_schtasks     dw 'E','r','r','o','r',':',' ','S','c','h','e','d','u','l','e','r',' ','f','a','i','l','e','d','.',0
 msg_ok_prot_on    dw 'P','r','o','t','e','c','t','i','o','n',' ','e','n','a','b','l','e','d','.',0
 msg_ok_prot_off   dw 'P','r','o','t','e','c','t','i','o','n',' ','d','i','s','a','b','l','e','d','.',0
 msg_ok_setitem    dw 'I','t','e','m',' ','u','p','d','a','t','e','d','.',0
 msg_ok_settrusted dw 'T','r','u','s','t','e','d',' ','a','p','p',' ','u','p','d','a','t','e','d','.',0
-msg_ok_export     dw 'E','x','p','o','r','t',' ','c','o','m','p','l','e','t','e','.',0
 msg_err_nodrv     dw 'E','r','r','o','r',':',' ','D','r','i','v','e','r',' ','n','o','t',' ','r','u','n','n','i','n','g','.',0
 msg_err_arg       dw 'E','r','r','o','r',':',' ','I','n','v','a','l','i','d',' ','a','r','g','u','m','e','n','t','.',0
-msg_err_file      dw 'E','r','r','o','r',':',' ','C','a','n','n','o','t',' ','c','r','e','a','t','e',' ','o','u','t','p','u','t',' ','f','i','l','e','.',0
 msg_err_ioctl     dw 'E','r','r','o','r',':',' ','D','r','i','v','e','r',' ','I','O','C','T','L',' ','f','a','i','l','e','d','.',0
 
 ; ==============================================================================
 ; MUTABLE DATA
 ; ==============================================================================
 .data
-    align 4
-    dw_written  dd 0
-    cli_reg_namelen dd 0
-    cli_reg_datalen dd 0
-    cli_reg_type    dd 0
-    cli_reg_flags   dd 0
-    align 8
-    cli_reg_hkey dq 0
-    cli_reg_name dw 520 dup(0)
 
 ; ==============================================================================
 ; CODE
@@ -159,6 +186,7 @@ msg_err_ioctl     dw 'E','r','r','o','r',':',' ','D','r','i','v','e','r',' ','I'
 ; Injects Enter into console so parent CMD prompt reappears, then exits.
 ; Stack: entry rsp%16=8; push rbx,rsi (+16)→8; sub 28h (+40)→0 ✓
 ; ==============================================================================
+PUBLIC _CliFinish
 _CliFinish proc
     push    rbx
     push    rsi
@@ -174,48 +202,6 @@ _CliFinish proc
     pop     rbx
     ret
 _CliFinish endp
-
-; ==============================================================================
-; _WriteBytes  rcx=hFile  rdx=pBuf  r8=nBytes
-; Stack: sub 28h; entry rsp%16=8; 8+40=48; 48%16=0 ✓
-; ==============================================================================
-_WriteBytes proc
-    sub     rsp, 28h
-    mov     qword ptr [rsp+20h], 0
-    lea     r9, dw_written
-    call    WriteFile
-    add     rsp, 28h
-    ret
-_WriteBytes endp
-
-; ==============================================================================
-; _WriteWStr  rcx=hFile  rdx=pWStr
-; Stack: push rbx,rsi (+16); sub 28h (+40); total 56; 8+56=64; 64%16=0 ✓
-; ==============================================================================
-_WriteWStr proc
-    push    rbx
-    push    rsi
-    sub     rsp, 28h
-
-    mov     rbx, rcx
-    mov     rsi, rdx
-
-    mov     rcx, rsi
-    call    wcslen_p
-    test    eax, eax
-    jz      @wws_ret
-    shl     eax, 1
-    mov     r8d, eax
-    mov     rdx, rsi
-    mov     rcx, rbx
-    call    _WriteBytes
-
-@wws_ret:
-    add     rsp, 28h
-    pop     rsi
-    pop     rbx
-    ret
-_WriteWStr endp
 
 ; ==============================================================================
 ; _CliHelp  → void
@@ -237,6 +223,10 @@ _CliHelp proc
     lea     rcx, msg_h6
     call    WideWriteLn
     lea     rcx, msg_h7
+    call    WideWriteLn
+    lea     rcx, msg_h_sv1
+    call    WideWriteLn
+    lea     rcx, msg_h_sv2
     call    WideWriteLn
     lea     rcx, msg_h8
     call    WideWriteLn
@@ -262,6 +252,10 @@ _CliHelp proc
     call    WideWriteLn
     lea     rcx, msg_h19
     call    WideWriteLn
+    lea     rcx, msg_h_as1
+    call    WideWriteLn
+    lea     rcx, msg_h_as2
+    call    WideWriteLn
     lea     rcx, msg_h20
     call    WideWriteLn
     lea     rcx, msg_h21
@@ -270,348 +264,230 @@ _CliHelp proc
     call    WideWriteLn
     lea     rcx, msg_h23
     call    WideWriteLn
+    lea     rcx, msg_h24
+    call    WideWriteLn
+    lea     rcx, msg_h25
+    call    WideWriteLn
+    lea     rcx, msg_h26
+    call    WideWriteLn
 
     add     rsp, 28h
     ret
 _CliHelp endp
 
 ; ==============================================================================
-; _CliEnumItems  rcx=pszOutFile  → calls ExitProcess
-; Stack: push rbx,rsi,rdi,r12,r13,r14 (+48); sub 48h (+72); 8+120=128; 128%16=0 ✓
-; CreateFileW/RegEnumValueW stack args fit in the 48h local area.
+; RunCmdAndWait  rcx=lpCommandLine(LPWSTR)  →  rax=exitCode, -1 on CP failure
+;
+; Launches command in a hidden console window, waits for completion,
+; returns process exit code.  Caller owns the writable buffer (CreateProcessW
+; may modify lpCommandLine per MSDN).
+;
+; Stack: push rbx (+8→rsp%16=0); sub 0E0h (+224→rsp%16=0) ✓
+; Frame from rsp:
+;   [000h..01Fh]  shadow space           (32)
+;   [020h..04Fh]  CreateProcessW args 5-10 (48)
+;   [050h..057h]  pad                    ( 8)
+;   [058h..0BFh]  STARTUPINFOW si        (104)
+;   [0C0h..0D7h]  PROCESS_INFORMATION pi ( 24)
+;   [0D8h..0DFh]  exitCode + pad         (  8)
 ; ==============================================================================
-_CliEnumItems proc
+RunCmdAndWait proc
+    push    rbx
+    sub     rsp, 0E0h
+
+    mov     rbx, rcx            ; save command line (non-volatile)
+
+    ; ── Zero SI (104 B = 13 QWORDs) ──────────────────────────────────────────
+    xor     eax, eax
+    mov     qword ptr [rsp+058h+000h], rax
+    mov     qword ptr [rsp+058h+008h], rax
+    mov     qword ptr [rsp+058h+010h], rax
+    mov     qword ptr [rsp+058h+018h], rax
+    mov     qword ptr [rsp+058h+020h], rax
+    mov     qword ptr [rsp+058h+028h], rax
+    mov     qword ptr [rsp+058h+030h], rax
+    mov     qword ptr [rsp+058h+038h], rax
+    mov     qword ptr [rsp+058h+040h], rax
+    mov     qword ptr [rsp+058h+048h], rax
+    mov     qword ptr [rsp+058h+050h], rax
+    mov     qword ptr [rsp+058h+058h], rax
+    mov     qword ptr [rsp+058h+060h], rax
+    mov     dword ptr [rsp+058h],      68h     ; si.cb = sizeof(STARTUPINFOW)
+    ; ── Zero PI (24 B = 3 QWORDs) ────────────────────────────────────────────
+    mov     qword ptr [rsp+0C0h], rax
+    mov     qword ptr [rsp+0C8h], rax
+    mov     qword ptr [rsp+0D0h], rax
+
+    ; ── CreateProcessW ────────────────────────────────────────────────────────
+    lea     rax, [rsp+0C0h]
+    mov     qword ptr [rsp+48h], rax           ; arg10 &pi
+    lea     rax, [rsp+058h]
+    mov     qword ptr [rsp+40h], rax           ; arg9  &si
+    mov     qword ptr [rsp+38h], 0             ; arg8  lpCurrentDirectory = NULL
+    mov     qword ptr [rsp+30h], 0             ; arg7  lpEnvironment = NULL
+    mov     dword ptr [rsp+28h], CREATE_NO_WINDOW ; arg6
+    mov     dword ptr [rsp+20h], 0             ; arg5  bInheritHandles = FALSE
+    xor     r9d, r9d
+    xor     r8d, r8d
+    mov     rdx, rbx
+    xor     ecx, ecx
+    call    CreateProcessW
+    test    eax, eax
+    jz      @rcw_fail
+
+    ; ── Wait ──────────────────────────────────────────────────────────────────
+    mov     edx, INFINITE
+    mov     rcx, qword ptr [rsp+0C0h]          ; hProcess
+    call    WaitForSingleObject
+
+    ; ── Get exit code ────────────────────────────────────────────────────────
+    mov     qword ptr [rsp+0D8h], 0
+    lea     rdx, [rsp+0D8h]
+    mov     rcx, qword ptr [rsp+0C0h]          ; hProcess
+    call    GetExitCodeProcess
+
+    ; ── Close handles ────────────────────────────────────────────────────────
+    mov     rcx, qword ptr [rsp+0C8h]          ; hThread
+    call    CloseHandle
+    mov     rcx, qword ptr [rsp+0C0h]          ; hProcess
+    call    CloseHandle
+
+    mov     eax, dword ptr [rsp+0D8h]
+    jmp     @rcw_ret
+
+@rcw_fail:
+    mov     eax, -1
+
+@rcw_ret:
+    add     rsp, 0E0h
+    pop     rbx
+    ret
+RunCmdAndWait endp
+
+; ==============================================================================
+; _CliAutostart  rcx="on"|"off"  → calls ExitProcess
+;
+; on:  1) schtasks /create /f /sc onlogon /rl highest /tn VaultGuard
+;              /tr "\"<exe>\" /tray"
+;      2) powershell Set-ScheduledTask ... to clear battery restrictions
+; off: schtasks /delete /f /tn VaultGuard
+;
+; Stack: push rbx,rsi,rdi (+24→rsp%16=0); sub 20h (+32→rsp%16=0) ✓
+; ==============================================================================
+_CliAutostart proc
     push    rbx
     push    rsi
     push    rdi
-    push    r12
-    push    r13
-    push    r14
-    sub     rsp, 48h
+    sub     rsp, 20h
 
-    mov     r14, rcx            ; save output filename
+    mov     rbx, rcx            ; "on" or "off"
 
-@cei_create_file:
-    ; --- create output file ---
-    ; CreateFileW(lpFileName, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL)
-    mov     qword ptr [rsp+30h], 0
-    mov     dword ptr [rsp+28h], FILE_ATTRIBUTE_NORMAL
-    mov     dword ptr [rsp+20h], CREATE_ALWAYS
-    xor     r9d, r9d
-    xor     r8d, r8d
-    mov     edx, GENERIC_WRITE
-    mov     rcx, r14
-    call    CreateFileW
-    cmp     rax, INVALID_HANDLE_VALUE
-    je      @cei_file_err
-    mov     rbx, rax            ; hFile
-
-    ; --- BOM ---
-    mov     r8d, 2
-    lea     rdx, w_bom
+    ; ── off ──────────────────────────────────────────────────────────────────
+    lea     rdx, str_off
     mov     rcx, rbx
-    call    _WriteBytes
-
-    ; --- header ---
-    lea     rdx, str_csv_paths_hdr
-    mov     rcx, rbx
-    call    _WriteWStr
-
-    ; Export protected folders from persisted config. This is the authoritative
-    ; user-visible state; the driver enum buffer can lag after flags=0 removal.
-    lea     rax, cli_reg_hkey
-    mov     qword ptr [rsp+20h], rax
-    mov     r9d, KEY_READ
-    xor     r8d, r8d
-    lea     rdx, str_key_paths_cli
-    mov     rcx, HKEY_CURRENT_USER
-    call    RegOpenKeyExW
+    call    wcscmp_ci
     test    eax, eax
-    jnz     @cei_done
+    jnz     @cas_try_on
 
-    xor     r13d, r13d
+    lea     rdi, g_tempBuf
+    lea     rsi, str_scht_off
+@cas_copy_off:
+    mov     ax, word ptr [rsi]
+    mov     word ptr [rdi], ax
+    add     rsi, 2
+    add     rdi, 2
+    test    ax, ax
+    jnz     @cas_copy_off
 
-@cei_loop:
-    mov     cli_reg_namelen, 520
-    mov     cli_reg_datalen, 4
-    lea     rax, cli_reg_datalen
-    mov     qword ptr [rsp+38h], rax
-    lea     rax, cli_reg_flags
-    mov     qword ptr [rsp+30h], rax
-    lea     rax, cli_reg_type
-    mov     qword ptr [rsp+28h], rax
-    mov     qword ptr [rsp+20h], 0
-    lea     r9, cli_reg_namelen
-    lea     r8, cli_reg_name
-    mov     edx, r13d
-    mov     rcx, cli_reg_hkey
-    call    RegEnumValueW
-    cmp     eax, ERROR_NO_MORE_ITEMS
-    je      @cei_close_reg
+    lea     rcx, g_tempBuf
+    call    RunCmdAndWait
     test    eax, eax
-    jnz     @cei_next
+    jnz     @cas_schtasks_err
 
-    mov     edi, cli_reg_flags
-    and     edi, 0Fh
-
-    lea     rsi, cli_reg_name
-    mov     rcx, rsi
-    call    wcslen_p
-    test    eax, eax
-    jz      @cei_next
-    mov     r12d, eax
-    shl     r12d, 1                    ; path bytes, no terminator
-
-    ; write path bytes
-    mov     rdx, rsi
-    mov     r8d, r12d
-    mov     rcx, rbx
-    call    _WriteBytes
-
-    ; comma
-    mov     r8d, 2
-    lea     rdx, w_comma
-    mov     rcx, rbx
-    call    _WriteBytes
-
-    ; Hidden
-    test    edi, VG_FLAG_HIDDEN
-    lea     rdx, w_one
-    jnz     @cei_h1
-    lea     rdx, w_zero
-@cei_h1:
-    mov     r8d, 2
-    mov     rcx, rbx
-    call    _WriteBytes
-
-    mov     r8d, 2
-    lea     rdx, w_comma
-    mov     rcx, rbx
-    call    _WriteBytes
-
-    ; Locked
-    test    edi, VG_FLAG_LOCKED
-    lea     rdx, w_one
-    jnz     @cei_l1
-    lea     rdx, w_zero
-@cei_l1:
-    mov     r8d, 2
-    mov     rcx, rbx
-    call    _WriteBytes
-
-    mov     r8d, 2
-    lea     rdx, w_comma
-    mov     rcx, rbx
-    call    _WriteBytes
-
-    ; ReadOnly
-    test    edi, VG_FLAG_READONLY
-    lea     rdx, w_one
-    jnz     @cei_r1
-    lea     rdx, w_zero
-@cei_r1:
-    mov     r8d, 2
-    mov     rcx, rbx
-    call    _WriteBytes
-
-    mov     r8d, 2
-    lea     rdx, w_comma
-    mov     rcx, rbx
-    call    _WriteBytes
-
-    ; NoExec (last field — CRLF after)
-    test    edi, VG_FLAG_NOEXEC
-    lea     rdx, w_one
-    jnz     @cei_x1
-    lea     rdx, w_zero
-@cei_x1:
-    mov     r8d, 2
-    mov     rcx, rbx
-    call    _WriteBytes
-
-    mov     r8d, 4
-    lea     rdx, w_crlf
-    mov     rcx, rbx
-    call    _WriteBytes
-
-@cei_next:
-    inc     r13d
-    jmp     @cei_loop
-
-@cei_close_reg:
-    mov     rcx, cli_reg_hkey
-    call    RegCloseKey
-
-@cei_done:
-    mov     rcx, rbx
-    call    CloseHandle
-    lea     rcx, msg_ok_export
+    lea     rcx, msg_ok_autostart_off
     call    WideWriteLn
     xor     ecx, ecx
     call    _CliFinish
 
-@cei_file_err:
-    lea     rcx, msg_err_file
-    call    WideWriteLn
-    mov     ecx, 1
-    call    _CliFinish
-
-    add     rsp, 48h    ; unreachable — needed for MASM proc epilogue
-    pop     r14
-    pop     r13
-    pop     r12
-    pop     rdi
-    pop     rsi
-    pop     rbx
-    ret
-_CliEnumItems endp
-
-; ==============================================================================
-; _CliEnumTrusted  rcx=pszOutFile  → calls ExitProcess
-; Stack: same frame as _CliEnumItems ✓
-; ==============================================================================
-_CliEnumTrusted proc
-    push    rbx
-    push    rsi
-    push    rdi
-    push    r12
-    push    r13
-    push    r14
-    sub     rsp, 48h
-
-    mov     r14, rcx
-
-    call    EnsureDriverReady
+    ; ── on ───────────────────────────────────────────────────────────────────
+@cas_try_on:
+    lea     rdx, str_on
+    mov     rcx, rbx
+    call    wcscmp_ci
     test    eax, eax
-    jz      @cet_no_driver
+    jnz     @cas_bad_arg
 
-    call    IoctlEnumTrusted
+    ; Build: [pre][exe][suf] → g_tempBuf
+    lea     rdi, g_tempBuf
+    lea     rsi, str_scht_on_pre
+@cas_copy_pre:
+    mov     ax, word ptr [rsi]
+    test    ax, ax
+    jz      @cas_pre_done
+    mov     word ptr [rdi], ax
+    add     rsi, 2
+    add     rdi, 2
+    jmp     @cas_copy_pre
+@cas_pre_done:
+    mov     r8d, MAX_PATH
+    mov     rdx, rdi
+    xor     ecx, ecx
+    call    GetModuleFileNameW
     test    eax, eax
-    jz      @cet_enum_empty
+    jz      @cas_bad_arg
+    lea     rdi, [rdi + rax*2]
 
-    call    CloseDevice
+    lea     rsi, str_scht_on_suf
+@cas_copy_suf:
+    mov     ax, word ptr [rsi]
+    mov     word ptr [rdi], ax
+    add     rsi, 2
+    add     rdi, 2
+    test    ax, ax
+    jnz     @cas_copy_suf
 
-@cet_create_file:
-    mov     qword ptr [rsp+30h], 0
-    mov     dword ptr [rsp+28h], FILE_ATTRIBUTE_NORMAL
-    mov     dword ptr [rsp+20h], CREATE_ALWAYS
-    xor     r9d, r9d
-    xor     r8d, r8d
-    mov     edx, GENERIC_WRITE
-    mov     rcx, r14
-    call    CreateFileW
-    cmp     rax, INVALID_HANDLE_VALUE
-    je      @cet_file_err
-    mov     rbx, rax
-
-    ; BOM
-    mov     r8d, 2
-    lea     rdx, w_bom
-    mov     rcx, rbx
-    call    _WriteBytes
-
-    ; header
-    lea     rdx, str_csv_trust_hdr
-    mov     rcx, rbx
-    call    _WriteWStr
-
-    ; Export trusted apps from persisted config. The driver keeps process trust
-    ; state separately and does not enumerate these registry names reliably.
-    lea     rax, cli_reg_hkey
-    mov     qword ptr [rsp+20h], rax
-    mov     r9d, KEY_READ
-    xor     r8d, r8d
-    lea     rdx, str_key_trusted_cli
-    mov     rcx, HKEY_CURRENT_USER
-    call    RegOpenKeyExW
+    ; Run schtasks /create
+    lea     rcx, g_tempBuf
+    call    RunCmdAndWait
     test    eax, eax
-    jnz     @cet_done
+    jnz     @cas_schtasks_err
 
-    xor     r13d, r13d
+    ; Fix battery restrictions (best-effort — ignore exit code)
+    lea     rdi, g_tempBuf
+    lea     rsi, str_ps_battery
+@cas_copy_bat:
+    mov     ax, word ptr [rsi]
+    mov     word ptr [rdi], ax
+    add     rsi, 2
+    add     rdi, 2
+    test    ax, ax
+    jnz     @cas_copy_bat
+    lea     rcx, g_tempBuf
+    call    RunCmdAndWait
 
-@cet_loop:
-    mov     cli_reg_namelen, 520
-    mov     qword ptr [rsp+38h], 0
-    mov     qword ptr [rsp+30h], 0
-    mov     qword ptr [rsp+28h], 0
-    mov     qword ptr [rsp+20h], 0
-    lea     r9, cli_reg_namelen
-    lea     r8, cli_reg_name
-    mov     edx, r13d
-    mov     rcx, cli_reg_hkey
-    call    RegEnumValueW
-    cmp     eax, ERROR_NO_MORE_ITEMS
-    je      @cet_close_reg
-    test    eax, eax
-    jnz     @cet_next
-
-    ; write name bytes
-    lea     rdx, cli_reg_name
-    mov     rcx, rdx
-    call    wcslen_p
-    shl     eax, 1
-    mov     r8d, eax
-    lea     rdx, cli_reg_name
-    mov     rcx, rbx
-    call    _WriteBytes
-
-    ; CRLF
-    mov     r8d, 4
-    lea     rdx, w_crlf
-    mov     rcx, rbx
-    call    _WriteBytes
-
-@cet_next:
-    inc     r13d
-    jmp     @cet_loop
-
-@cet_close_reg:
-    mov     rcx, cli_reg_hkey
-    call    RegCloseKey
-
-@cet_done:
-    mov     rcx, rbx
-    call    CloseHandle
-    lea     rcx, msg_ok_export
+    lea     rcx, msg_ok_autostart_on
     call    WideWriteLn
     xor     ecx, ecx
     call    _CliFinish
 
-@cet_no_driver:
-    lea     rcx, msg_err_nodrv
+@cas_bad_arg:
+    lea     rcx, msg_err_arg
     call    WideWriteLn
     mov     ecx, 1
     call    _CliFinish
 
-@cet_enum_empty:
-    call    CloseDevice
-    lea     rax, g_ioBuf
-    mov     dword ptr [rax + VG_ER_COUNT], 0
-    mov     dword ptr [rax + VG_ER_TOTALBYTES], 0
-    jmp     @cet_create_file
-
-@cet_ioctl_err:
-    call    CloseDevice
-    lea     rcx, msg_err_ioctl
+@cas_schtasks_err:
+    lea     rcx, msg_err_schtasks
     call    WideWriteLn
     mov     ecx, 1
     call    _CliFinish
 
-@cet_file_err:
-    lea     rcx, msg_err_file
-    call    WideWriteLn
-    mov     ecx, 1
-    call    _CliFinish
-
-    add     rsp, 48h
-    pop     r14
-    pop     r13
-    pop     r12
+    add     rsp, 20h    ; unreachable
     pop     rdi
     pop     rsi
     pop     rbx
     ret
-_CliEnumTrusted endp
+_CliAutostart endp
 
 ; ==============================================================================
 ; CliDispatch  rcx=argv[1]  rdx=argv  r8=argc  →  rax=0 if unknown (→ GUI)
@@ -681,12 +557,39 @@ CliDispatch proc
     mov     rcx, rbx
     call    wcscmp_ci
     test    eax, eax
-    jnz     @cd_try_enumitems
+    jnz     @cd_try_service
 
 @cd_help:
     call    _CliHelp
     xor     ecx, ecx
     call    _CliFinish
+
+    ; ── /service install|uninstall ───────────────────────────────────────────
+@cd_try_service:
+    lea     rdx, sw_service
+    mov     rcx, rbx
+    call    wcscmp_ci
+    test    eax, eax
+    jnz     @cd_try_enumitems
+
+    cmp     edi, 3
+    jl      @cd_bad_arg
+    mov     r12, qword ptr [rsi + 2*8]  ; argv[2] = "install" / "uninstall"
+
+    lea     rdx, str_install
+    mov     rcx, r12
+    call    wcscmp_ci
+    test    eax, eax
+    jnz     @cd_svc_uninst
+    call    _CliServiceInstall          ; never returns
+
+@cd_svc_uninst:
+    lea     rdx, str_uninstall
+    mov     rcx, r12
+    call    wcscmp_ci
+    test    eax, eax
+    jnz     @cd_bad_arg
+    call    _CliServiceUninstall        ; never returns
 
     ; ── /enumitems <file> ────────────────────────────────────────────────────
 @cd_try_enumitems:
@@ -866,7 +769,7 @@ CliDispatch proc
     mov     rcx, rbx
     call    wcscmp_ci
     test    eax, eax
-    jnz     @cd_unknown
+    jnz     @cd_try_svcstart
 
     cmp     edi, 4
     jl      @cd_bad_arg
@@ -921,6 +824,39 @@ CliDispatch proc
     call    WideWriteLn
     xor     ecx, ecx
     call    _CliFinish
+
+    ; ── /svcstart  (internal — invoked by SCM, not shown in help) ───────────
+@cd_try_svcstart:
+    lea     rdx, sw_svcstart
+    mov     rcx, rbx
+    call    wcscmp_ci
+    test    eax, eax
+    jnz     @cd_try_tray
+    call    _SvcStart               ; never returns
+
+    ; ── /tray ────────────────────────────────────────────────────────────────
+@cd_try_tray:
+    lea     rdx, sw_tray
+    mov     rcx, rbx
+    call    wcscmp_ci
+    test    eax, eax
+    jnz     @cd_try_autostart
+
+    mov     g_startMinimized, 1
+    ; fall through → @cd_try_autostart → @cd_unknown → return 0 (GUI mode)
+
+    ; ── /autostart on|off ────────────────────────────────────────────────────
+@cd_try_autostart:
+    lea     rdx, sw_autostart
+    mov     rcx, rbx
+    call    wcscmp_ci
+    test    eax, eax
+    jnz     @cd_unknown
+
+    cmp     edi, 3
+    jl      @cd_bad_arg
+    mov     rcx, qword ptr [rsi + 2*8]  ; argv[2] = "on"/"off"
+    call    _CliAutostart               ; never returns
 
     ; ── error / unknown ───────────────────────────────────────────────────────
 @cd_unknown:

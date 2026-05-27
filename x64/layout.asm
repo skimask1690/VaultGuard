@@ -33,6 +33,7 @@ EXTRN UpdateStatusBar           :PROC   ; handlers.asm
 EXTRN ConfigLoad                :PROC   ; config.asm
 
 EXTRN str_btn_toggle_off        :WORD   ; handlers.asm
+EXTRN g_wmTaskbarCreated        :DWORD  ; window.asm
 
 ; ==============================================================================
 ; CONSTANT STRINGS
@@ -150,6 +151,18 @@ _OnCreate proc
     mov     rcx, rbx
     call    ChangeWindowMessageFilterEx
 
+    ; Allow TaskbarCreated (registered msg, ID>=C000h) from Medium-IL Explorer
+    ; to cross UIPI into this High-IL process. Fixes tray icon not appearing
+    ; on logon when launched elevated via Task Scheduler.
+    mov     edx, g_wmTaskbarCreated
+    test    edx, edx
+    jz      @oc_skip_taskbar_flt
+    xor     r9d, r9d
+    mov     r8d, MSGFLT_ALLOW
+    mov     rcx, rbx
+    call    ChangeWindowMessageFilterEx
+@oc_skip_taskbar_flt:
+
     ; ── Toggle button: x=182 y=8 w=178 h=26 ─────────────────────────────────
     mov     r14, g_hInstance
     mov     qword ptr [rsp+58h], 0
@@ -251,33 +264,33 @@ _OnCreate proc
     mov     rcx, g_hwndLvPaths
     call    SendMessageW
 
-    ; Columns: Path(340) Hidden(70) Locked(70) Read-only(70) No run(70)
+    ; Columns: Path(300) Hidden(80) Locked(80) Read-only(80) No run(80)  total=620=client
     mov     r9, offset str_col_path
-    mov     r8d, 340
+    mov     r8d, 300
     xor     edx, edx
     mov     rcx, g_hwndLvPaths
     call    _LvAddColumn
 
     mov     r9, offset str_col_h
-    mov     r8d, 70
+    mov     r8d, 80
     mov     edx, 1
     mov     rcx, g_hwndLvPaths
     call    _LvAddColumn
 
     mov     r9, offset str_col_l
-    mov     r8d, 70
+    mov     r8d, 80
     mov     edx, 2
     mov     rcx, g_hwndLvPaths
     call    _LvAddColumn
 
     mov     r9, offset str_col_r
-    mov     r8d, 70
+    mov     r8d, 80
     mov     edx, 3
     mov     rcx, g_hwndLvPaths
     call    _LvAddColumn
 
     mov     r9, offset str_col_x
-    mov     r8d, 70
+    mov     r8d, 80
     mov     edx, 4
     mov     rcx, g_hwndLvPaths
     call    _LvAddColumn

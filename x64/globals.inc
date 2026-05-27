@@ -19,6 +19,7 @@
     EXTRN   g_driverRunning     :DWORD
     EXTRN   g_protActive        :DWORD
     EXTRN   g_cliMode           :DWORD
+    EXTRN   g_startMinimized    :DWORD
     EXTRN   g_ioBuf             :BYTE
     EXTRN   g_pathBuf           :WORD
     EXTRN   g_tempBuf           :WORD

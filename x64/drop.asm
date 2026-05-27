@@ -18,14 +18,22 @@ EXTRN CoInitialize              :PROC
 EXTRN CoUninitialize            :PROC
 EXTRN CoCreateInstance          :PROC
 EXTRN DragQueryFileW            :PROC
+EXTRN DragQueryPoint            :PROC
 EXTRN DragFinish                :PROC
 EXTRN GetLongPathNameW          :PROC
+EXTRN GetFileAttributesW        :PROC
+EXTRN ChildWindowFromPoint      :PROC
 
 ; ── Sibling modules ───────────────────────────────────────────────────────────
 EXTRN wcslen_p                  :PROC   ; strutil.asm
 EXTRN wcscmp_ci                 :PROC   ; strutil.asm
+EXTRN wcs_ascii_lower_inplace   :PROC   ; strutil.asm
 EXTRN RefreshLists              :PROC   ; listview.asm
 EXTRN ConfigSavePath            :PROC   ; config.asm
+EXTRN ConfigSaveTrusted         :PROC   ; config.asm
+EXTRN EnsureDriverReady         :PROC   ; driver.asm
+EXTRN CloseDevice               :PROC   ; driver.asm
+EXTRN IoctlAddTrusted           :PROC   ; driver.asm
 
 EXTRN g_pendingPath             :WORD   ; handlers.asm
 
@@ -35,6 +43,7 @@ EXTRN g_pendingPath             :WORD   ; handlers.asm
 .const
 
 str_ext_lnk         dw '.','l','n','k',0
+str_ext_exe         dw '.','e','x','e',0
 
 ; COM GUIDs for Windows shortcut resolution
 CLSID_ShellLink dd 00021401h
@@ -160,18 +169,23 @@ ResolveLnkPath proc
 ResolveLnkPath endp
 
 ; ==============================================================================
-; _OnDropFiles  rcx=HDROP  →  void
-; First dropped path becomes a pending GUI row. .lnk files are resolved.
-; Stack: entry rsp%16=8; push 4 regs (+32)→8; sub 38h (+56)→0 ✓
+; _OnDropFiles  rcx=HDROP  rdx=hMainWnd  →  void
+; Resolves dropped path (.lnk support), then routes by drop target:
+;   drop on g_hwndLvTrusted → add process basename to trusted list
+;   drop anywhere else      → set as pending path row in upper list
+; Stack: entry rsp%16=8; push 5 regs (+40)→0; sub 30h (+48)→0 ✓
+;        [rsp+20h..27h] = POINT scratch for DragQueryPoint
 ; ==============================================================================
 _OnDropFiles proc
     push    rbx
     push    rsi
     push    rdi
     push    r12
-    sub     rsp, 38h
+    push    r13
+    sub     rsp, 30h
 
     mov     rbx, rcx                    ; HDROP
+    mov     r13, rdx                    ; hMainWnd
 
     mov     r9d, 520                    ; cch = buffer size in WCHARs
     lea     r8, g_pathBuf               ; lpszFile = output buffer
@@ -187,23 +201,23 @@ _OnDropFiles proc
     call    wcslen_p
     mov     r12, rax                    ; r12 = path length in WCHARs
     cmp     r12, 4
-    jl      @odf_copy_pending           ; too short to have .lnk extension
+    jl      @odf_check_target           ; too short to have .lnk extension
 
     lea     rcx, g_pathBuf
     lea     rcx, [rcx + r12*2 - 8]     ; point at last 4 WCHARs of path
     lea     rdx, str_ext_lnk            ; L".lnk\0"
     call    wcscmp_ci                   ; case-insensitive compare
     test    eax, eax
-    jnz     @odf_copy_pending           ; not a .lnk → use path as-is
+    jnz     @odf_check_target           ; not a .lnk → use path as-is
 
     lea     r8, g_statusBuf
     lea     rdx, g_tempBuf
     lea     rcx, g_pathBuf
     call    ResolveLnkPath
     test    eax, eax
-    jz      @odf_copy_pending
+    jz      @odf_check_target
     cmp     word ptr [g_tempBuf], 0
-    je      @odf_copy_pending
+    je      @odf_check_target
     lea     rsi, g_tempBuf
     ; Normalize to filesystem-canonical case — driver is case-sensitive,
     ; IShellLink::GetPath returns stored case (e.g. TOTALCMD64.EXE not totalcmd64.exe)
@@ -212,7 +226,22 @@ _OnDropFiles proc
     mov     rcx, rsi
     call    GetLongPathNameW            ; 0 on failure → g_tempBuf unchanged, still used
 
+@odf_check_target:
+    ; Determine which listview received the drop via cursor position.
+    lea     rdx, [rsp+20h]              ; &POINT (scratch at [rsp+20h..27h])
+    mov     rcx, rbx
+    call    DragQueryPoint              ; POINT filled in client coords of main window
+    movsxd  rax, dword ptr [rsp+20h]   ; x (sign-extend LONG)
+    movsxd  rdx, dword ptr [rsp+24h]   ; y
+    shl     rdx, 32
+    or      rdx, rax                    ; rdx = POINT packed (y:x) for ChildWindowFromPoint
+    mov     rcx, r13
+    call    ChildWindowFromPoint
+    cmp     rax, g_hwndLvTrusted
+    je      @odf_add_trusted
+
 @odf_copy_pending:
+    ; Drop on paths list (or elsewhere) → pending row in upper list
     ; Auto-commit any prior pending path to registry before overwriting it
     cmp     word ptr [g_pendingPath], 0
     je      @odf_no_prior_pending
@@ -235,12 +264,64 @@ _OnDropFiles proc
 
 @odf_refresh:
     call    RefreshLists
+    jmp     @odf_finish
+
+@odf_add_trusted:
+    ; Reject directories — trusted list is for executable files only
+    mov     rcx, rsi
+    call    GetFileAttributesW
+    cmp     eax, 0FFFFFFFFh             ; INVALID_FILE_ATTRIBUTES → can't stat
+    je      @odf_finish
+    test    eax, 10h                    ; FILE_ATTRIBUTE_DIRECTORY
+    jnz     @odf_finish
+
+    ; Drop on trusted list → extract basename → lowercase → add to trusted
+    mov     rdi, rsi                    ; rdi = best basename start (init = full path)
+@odf_trusted_scan:
+    movzx   eax, word ptr [rsi]
+    test    ax, ax
+    jz      @odf_trusted_exec
+    cmp     ax, '\'
+    jne     @odf_trusted_next
+    lea     rdi, [rsi + 2]              ; char after '\' = new candidate basename
+@odf_trusted_next:
+    add     rsi, 2
+    jmp     @odf_trusted_scan
+@odf_trusted_exec:
+    movzx   eax, word ptr [rdi]         ; empty basename → skip
+    test    ax, ax
+    jz      @odf_finish
+
+    ; Allow only .exe (resolved .lnk → .exe already; .lnk failures, docs etc. rejected)
+    mov     rcx, rdi
+    call    wcslen_p                    ; eax = basename length in WCHARs
+    cmp     eax, 4
+    jl      @odf_finish                 ; too short to have 4-char extension
+    sub     eax, 4
+    lea     rcx, [rdi + rax*2]         ; point at last 4 chars of basename
+    lea     rdx, str_ext_exe
+    call    wcscmp_ci                   ; case-insensitive .exe check
+    test    eax, eax
+    jnz     @odf_finish                 ; not .exe → reject
+
+    mov     rcx, rdi
+    call    wcs_ascii_lower_inplace     ; driver compares lowercase names
+    call    EnsureDriverReady
+    test    eax, eax
+    jz      @odf_finish
+    mov     rcx, rdi
+    call    IoctlAddTrusted
+    mov     rcx, rdi
+    call    ConfigSaveTrusted
+    call    CloseDevice
+    call    RefreshLists
 
 @odf_finish:
     mov     rcx, rbx
     call    DragFinish
 
-    add     rsp, 38h
+    add     rsp, 30h
+    pop     r13
     pop     r12
     pop     rdi
     pop     rsi

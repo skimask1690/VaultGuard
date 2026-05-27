@@ -65,6 +65,7 @@ SC_MANAGER_CREATE_SERVICE   EQU 0002h
 SC_MANAGER_CONNECT          EQU 0001h
 SC_MANAGER_ALL              EQU 000F003Fh
 SERVICE_KERNEL_DRIVER       EQU 00000001h
+SERVICE_AUTO_START          EQU 00000002h
 SERVICE_DEMAND_START        EQU 00000003h
 SERVICE_ERROR_NORMAL        EQU 00000001h
 SERVICE_QUERY_STATUS        EQU 00000004h
@@ -77,7 +78,17 @@ SERVICE_STATUS_PROCESS_SIZE EQU 36
 SERVICE_RUNNING             EQU 4
 SERVICE_STOPPED             EQU 1
 ERROR_SERVICE_ALREADY_RUNNING EQU 1056
+ERROR_SERVICE_DOES_NOT_EXIST EQU 424h
 ERROR_ALREADY_EXISTS        EQU 183
+SERVICE_WIN32_OWN_PROCESS   EQU 00000010h
+SERVICE_STOP_PENDING        EQU 3
+SERVICE_CONTROL_STOP        EQU 00000001h
+SERVICE_CONTROL_SHUTDOWN    EQU 5
+SERVICE_CONTROL_PRESHUTDOWN EQU 0Fh
+SERVICE_ACCEPT_STOP         EQU 1
+SERVICE_ACCEPT_SHUTDOWN     EQU 4
+SERVICE_ACCEPT_PRESHUTDOWN  EQU 100h
+INFINITE                    EQU 0FFFFFFFFh
 WAIT_FAILED_VAL             EQU 0FFFFFFFFh
 
 ; ------------------------------------------------------------------------------
@@ -87,6 +98,7 @@ HKEY_CURRENT_USER           EQU 0FFFFFFFF80000001h
 HKEY_LOCAL_MACHINE          EQU 0FFFFFFFF80000002h
 KEY_ALL_ACCESS              EQU 0F003Fh
 KEY_READ                    EQU 20019h
+KEY_SET_VALUE               EQU 00002h
 REG_OPTION_NON_VOLATILE     EQU 0
 REG_SZ                      EQU 1
 REG_DWORD                   EQU 4
@@ -110,6 +122,7 @@ CREATE_ALWAYS               EQU 2
 FILE_ATTRIBUTE_NORMAL       EQU 00000080h
 FILE_FLAG_OVERLAPPED        EQU 40000000h
 INVALID_HANDLE_VALUE        EQU -1
+CREATE_NO_WINDOW            EQU 08000000h
 
 ; ------------------------------------------------------------------------------
 ; WINDOW STYLES
@@ -308,6 +321,26 @@ BST_CHECKED                 EQU 1
 ; ------------------------------------------------------------------------------
 SW_SHOWNORMAL               EQU 1
 SW_HIDE                     EQU 0
+SW_RESTORE                  EQU 9
+SW_SHOW                     EQU 5
+SIZE_MINIMIZED              EQU 1
+VK_SHIFT                    EQU 10h
+WM_TRAY                     EQU 8001h
+WM_NULL                     EQU 0000h
+WM_LBUTTONDBLCLK            EQU 0203h
+WM_RBUTTONUP                EQU 0205h
+NIM_ADD                     EQU 0
+NIM_DELETE                  EQU 2
+NIF_MESSAGE                 EQU 1
+NIF_ICON                    EQU 2
+NIF_TIP                     EQU 4
+NID_CBSIZE                  EQU 168         ; NOTIFYICONDATAW v1 size on x64
+MF_STRING                   EQU 0
+MF_SEPARATOR                EQU 800h
+TPM_RIGHTBUTTON             EQU 2
+TPM_RETURNCMD               EQU 100h
+IDM_TRAY_RESTORE            EQU 1
+IDM_TRAY_EXIT               EQU 2
 IDC_ARROW_ATOM              EQU 32512
 WHITE_BRUSH                 EQU 0
 NULL_BRUSH                  EQU 5

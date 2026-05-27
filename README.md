@@ -1,6 +1,6 @@
 # VaultGuard
 
-**Pure x64 MASM folder-protection for Windows — kernel minifilter, GUI + CLI, zero CRT, < 60 KB**
+**Pure x64 MASM folder-protection for Windows — kernel minifilter, GUI + CLI, zero CRT, < 100 KB**
 
 > Reverse-engineered IOCTL layer communicating with `vg.sys`, a kernel FSFilter Content Screener
 > signed by PROMOSOFT CORPORATION (2014), which loads on Windows 11 26H1 via the legacy
@@ -18,6 +18,7 @@
 - [Protection Flags](#protection-flags)
 - [GUI Reference](#gui-reference)
 - [CLI Reference](#cli-reference)
+- [Service & Autostart](#service--autostart)
 - [Use Cases](#use-cases)
 - [Driver Communication](#driver-communication)
 - [Registry Layout](#registry-layout)
@@ -38,7 +39,7 @@ The binary turned out to be a real find. Inside it I found a kernel-mode FSFilte
 
 I reverse-engineered the IOCTL interface from the binary, extracted the driver, and rebuilt the entire userland from scratch in pure x64 MASM. During development I spent considerable time debugging driver interactions — tracing IOCTL responses, watching pool allocations, testing repeated load/unload cycles. Despite being 12 years old, `vg.sys` held up extremely well: no pool leaks, no dangling references, no stale device objects. The cleanup paths are correct. In the kernel world, that's not a given.
 
-The result is VaultGuard — under 60 KB, zero CRT, the same binary as full Win32 GUI and fully scriptable CLI.
+The result is VaultGuard — under 100 KB, zero CRT, the same binary as full Win32 GUI and fully scriptable CLI.
 
 **Forum thread:** https://forums.mydigitallife.net/threads/vaultguard-%E2%80%94-folder-file-protection-in-pure-x64-assembly-60-kb-no-crt-win11-mica.90355/
 
@@ -53,13 +54,14 @@ The same binary runs as a full Win32 GUI application or a scriptable CLI tool.
 
 | Property | Value |
 |----------|-------|
-| Binary size | < 60 KB |
-| Original (Qt/C++) | ~8 MB — over 130× larger |
+| Binary size | < 100 KB |
+| Original (Qt/C++) | ~8 MB — over 80× larger |
 | CRT dependencies | Zero |
 | Linked DLLs | `kernel32` `user32` `advapi32` `shell32` `ole32` `dwmapi` `gdi32` `comctl32` `uxtheme` `cabinet` |
-| UI | Win32 — Dark Mode, Mica (DWM), PerMonitorV2 DPI |
+| UI | Win32 — Dark Mode, Mica (DWM), PerMonitorV2 DPI, system tray |
 | Driver | `vg.sys` — FSFilter Content Screener, Altitude 389991 |
-| Service name | `clrcd` |
+| Driver service name | `clrcd` |
+| VaultGuard service name | `VaultGuard` (optional, auto-start) |
 | Registry | `HKCU\Software\VG\Paths` · `HKCU\Software\VG\Trusted` |
 | Requires | Windows 11 x64, Administrator |
 | Driver signature | Signed March 18, 2014 — loads via legacy cross-sign compatibility, no test-signing needed |
@@ -72,11 +74,13 @@ Run from an **elevated command prompt** (Administrator). Driver installs itself 
 
 **GUI — double-click `vg.exe` or run without arguments:**
 
-- Drag a folder or file from Explorer onto the window → row appears instantly
+- Drag a folder or file from Explorer onto the **Protected Paths** panel → row appears instantly
 - Drag a `.lnk` shortcut → resolved to real target automatically via `IShellLink`
+- Drag an `.exe` file onto the **Trusted Apps** panel → executable name extracted and added as trusted process
 - Click **Hidden / Locked / Read-only / No run** checkbox → flag applied to kernel driver immediately
 - `Ctrl+Click` multiple rows → click **Remove selected** to delete them all at once
 - Add a process name to **Allowed apps** → that process bypasses all driver protections
+- `Shift+Minimize` → window hides to system tray
 - Title bar shows live driver + protection state: `Driver: TRANSIENT | Protection: ON`
 
 **CLI — same binary, scriptable:**
@@ -87,10 +91,13 @@ vg.exe /setitem "C:\Private" Locked
 vg.exe /settrusted totalcmd64.exe Enabled
 vg.exe /enumitems   out.csv
 vg.exe /enumtrusted trust.csv
+vg.exe /tray                        start minimized to system tray
+vg.exe /autostart on                register Task Scheduler logon entry
+vg.exe /service install             register and start as Windows service
 vg.exe /?
 ```
 
-Everything above — the GUI, the CLI, the COM `.lnk` resolver, the FDI driver extractor, the SCM installer, the IOCTL layer, the registry persistence — is written in pure x64 MASM assembly. Zero CRT. Zero runtime. Every byte deliberate.
+Everything above — the GUI, the CLI, the COM `.lnk` resolver, the FDI driver extractor, the SCM installer, the IOCTL layer, the registry persistence, the Windows service runtime, the tray icon — is written in pure x64 MASM assembly. Zero CRT. Zero runtime. Every byte deliberate.
 
 ---
 
@@ -102,8 +109,12 @@ flowchart TD
     B -->|Yes| C[CliDispatch argv]
     B -->|No| D[CreateMainWindow GUI]
     C --> E{Known switch?}
-    E -->|Yes| F[CLI command handler]
-    E -->|No| D
+    E -->|/service| SVC[_CliServiceInstall/Uninstall]
+    E -->|/autostart| AS[_CliAutostart schtasks.exe]
+    E -->|/tray| TR[g_startMinimized=1 → GUI]
+    E -->|/svcstart| SS[_SvcStart → StartServiceCtrlDispatcherW]
+    E -->|other| F[CLI command handler]
+    E -->|unknown| D
     D --> G[WM_CREATE: _OnCreate layout]
     G --> H[SetTimer 2000ms]
     H --> I[Message Loop]
@@ -112,6 +123,9 @@ flowchart TD
     J -->|WM_NOTIFY| L[_OnNotify flag checkboxes]
     J -->|WM_DROPFILES| M[_OnDropFiles drop.asm]
     J -->|WM_TIMER| N[UpdateStatusBar]
+    J -->|WM_SIZE minimized+Shift| TY[_TrayAdd tray.asm]
+    J -->|WM_TRAY| TM[_OnTrayMsg tray.asm]
+    J -->|TaskbarCreated| TA[_TrayAdd re-register]
     J -->|WM_SETTINGCHANGE| O[_ReadDarkMode + ApplyDarkMode]
     K --> P[EnsureDriverReady]
     F --> P
@@ -141,7 +155,7 @@ Flags combine as a bitmask: `Hidden + Locked = 0x03`, `Hidden + Locked + Read-on
 
 ## GUI Reference
 
-Launch `vg.exe` without arguments. Fixed 680 × 450 px window.
+Launch `vg.exe` without arguments. Fixed 680 × 472 px window.
 
 ### Main Window
 
@@ -154,6 +168,16 @@ VaultGuard | Driver: TRANSIENT | Protection: ON
 
 Dark Mode and Mica backdrop follow the system theme automatically via `WM_SETTINGCHANGE`.
 
+### System Tray
+
+- **`Shift+Minimize`** — hides window and adds tray icon
+- **`/tray` switch** — starts directly as a tray-only process (hidden window)
+- **Double-click tray icon** — restores main window
+- **Right-click tray icon** — context menu (Restore / Exit)
+- **`TaskbarCreated` message** — if Explorer restarts (crash or logon race), VaultGuard re-registers its tray icon automatically
+
+> **UIPI note:** When launched elevated via Task Scheduler (`/rl highest`), `ChangeWindowMessageFilterEx` is called during `WM_CREATE` to allow the `TaskbarCreated` registered message (ID ≥ `0xC000`) to cross the integrity boundary from Medium-IL Explorer into the High-IL process. Without this, the tray icon would not appear after logon.
+
 ### Protected Folders Panel
 
 | Control | Behavior |
@@ -161,7 +185,7 @@ Dark Mode and Mica backdrop follow the system theme automatically via `WM_SETTIN
 | **[Add path...]** button | Opens `SHBrowseForFolderW` native folder browser |
 | **[Remove selected]** button | Removes all selected entries (multi-select supported) |
 | **Flag columns** (H / L / R / X) | Click any flag cell → toggles checkbox + sends IOCTL update to driver immediately |
-| **Drag & Drop** | Accepts folders and files from Explorer; `.lnk` shortcuts resolved via COM `IShellLink` |
+| **Drag & Drop** | Accepts folders and files from Explorer; `.lnk` shortcuts resolved via COM `IShellLink`; `.exe` files dropped here add full path as protected item |
 
 **Columns:**
 
@@ -182,6 +206,7 @@ Processes in this list bypass all driver protections — Hidden/Locked/Read-only
 | **Edit box** | Enter process executable name (e.g. `totalcmd64.exe`) |
 | **[Add]** button | Normalizes to lowercase → `IoctlAddTrusted` + `ConfigSaveTrusted` |
 | **[Remove]** button | Clears entire driver trusted list → removes registry entry → reloads remaining entries via `ConfigLoad` |
+| **Drag & Drop** | Drop an `.exe` file or `.lnk` shortcut onto this panel — executable name extracted and added directly as trusted process |
 
 > **Note:** Removing a trusted process sends an empty `IoctlRemoveTrusted` that wipes the **entire** active trusted list in the driver. `ConfigLoad` immediately reloads all remaining registry entries. The driver provides no per-item removal IOCTL.
 
@@ -198,6 +223,9 @@ vg.exe /setitem       <path>   Hidden | Locked | Read-only | No-execution | Disa
 vg.exe /settrusted    <name>   Enabled | Disabled
 vg.exe /enumitems     <out.csv>
 vg.exe /enumtrusted   <out.csv>
+vg.exe /tray
+vg.exe /autostart     on | off
+vg.exe /service       install | uninstall
 ```
 
 ### Command Summary
@@ -210,6 +238,9 @@ vg.exe /enumtrusted   <out.csv>
 | `/settrusted <name> <state>` | Add or remove a trusted process | `vg.exe /settrusted cmd.exe Enabled` |
 | `/enumitems <file.csv>` | Export protected paths as UTF-16LE CSV | `vg.exe /enumitems out.csv` |
 | `/enumtrusted <file.csv>` | Export trusted processes as UTF-16LE CSV | `vg.exe /enumtrusted trust.csv` |
+| `/tray` | Start minimized to system tray | `vg.exe /tray` |
+| `/autostart on\|off` | Register/remove Task Scheduler logon entry | `vg.exe /autostart on` |
+| `/service install\|uninstall` | Register/remove VaultGuard Windows service | `vg.exe /service install` |
 
 ### CSV Output Formats
 
@@ -231,6 +262,58 @@ totalcmd64.exe
 |------|---------|
 | `0` | Success |
 | `1` | Unknown switch / bad argument / driver error |
+
+---
+
+## Service & Autostart
+
+### Windows Service (`/service install`)
+
+```
+vg.exe /service install
+vg.exe /service uninstall
+```
+
+Registers `vg.exe` itself as a Windows service named **`VaultGuard`**:
+
+- **Start type:** `SERVICE_AUTO_START` — starts automatically at boot
+- **Binary path:** `"<full path to vg.exe>" /svcstart`
+- On install: service is created **and immediately started** via `StartServiceW`
+- On uninstall: service is stopped (if running) and deleted via `DeleteService`
+
+The internal `/svcstart` switch is dispatched by `CliDispatch` → `_SvcStart` → `StartServiceCtrlDispatcherW`. The SCM thread runs the standard Win32 service lifecycle:
+
+```
+_SvcMain → RegisterServiceCtrlHandlerExW → SetServiceStatus(RUNNING)
+         → WaitForSingleObject(stop_event, INFINITE)
+         → on STOP/SHUTDOWN/PRESHUTDOWN: SetEvent → SetServiceStatus(STOPPED)
+```
+
+Accepted controls: `SERVICE_CONTROL_STOP`, `SERVICE_CONTROL_SHUTDOWN`, `SERVICE_CONTROL_PRESHUTDOWN`.
+
+> The service mode runs the full GUI (window + message loop) — the same binary, no separate service-only build. The SCM thread acts as a watchdog; the main thread runs the normal Win32 message loop.
+
+### Logon Autostart (`/autostart on`)
+
+```
+vg.exe /autostart on
+vg.exe /autostart off
+```
+
+Registers a **Task Scheduler** logon task:
+
+```
+schtasks.exe /create /f /sc onlogon /rl highest /tn VaultGuard
+             /tr "\"<exe>\" /tray"
+```
+
+Key properties:
+- `/rl highest` — runs elevated (High Integrity Level) without UAC prompt at logon
+- `/sc onlogon` — fires once per user logon session
+- `/tray` — launches directly to system tray (no window flash)
+- Battery restrictions cleared after creation: `DisallowStartIfOnBatteries:$false`, `StopIfGoingOnBatteries:$false`
+
+> This is the only officially supported Microsoft method for silent elevated autostart on Windows 10/11. `HKCU\Run` entries are silently skipped by Windows for processes with `requireAdministrator` manifest.
 
 ---
 
@@ -268,6 +351,26 @@ vg.exe /setitem "C:\Backups" Read-only
 ```
 
 The driver strips `FILE_WRITE_DATA` and `DELETE` bits at the kernel level. Trusted processes can still write normally.
+
+### Set up persistent elevated autostart
+
+```powershell
+vg.exe /autostart on
+# Task Scheduler entry created. VaultGuard starts at logon to tray, elevated, no UAC prompt.
+
+# To remove:
+vg.exe /autostart off
+```
+
+### Install as a Windows service (boot-time start)
+
+```powershell
+vg.exe /service install
+# Service VaultGuard created (AUTO_START) and started immediately.
+
+# To remove:
+vg.exe /service uninstall
+```
 
 ### Scripted status check
 
@@ -343,7 +446,7 @@ The driver holds no persistent state across reboots.
 
 ## Module Analysis
 
-13 MASM source files, each with a single defined responsibility.
+15 MASM source files, each with a single defined responsibility.
 
 ### `main.asm` — Entry Point & Globals
 
@@ -367,6 +470,7 @@ Public globals:
 | `g_hFontMain`, `g_hFontSmall` | `dq` | GDI font handles |
 | `g_hBrushBg` | `dq` | Background brush (`0x202020` in dark mode) |
 | `g_isDarkMode` | `dd` | 1 = dark mode active |
+| `g_startMinimized` | `dd` | 1 = start hidden to tray (`/tray` switch) |
 | `g_driverInstalled`, `g_driverRunning`, `g_protActive` | `dd` | Driver state flags |
 | `g_ioBuf` | `65536 B` | IOCTL enumeration buffer (64 KB) |
 | `g_pathBuf`, `g_tempBuf`, `g_statusBuf` | `520 W` | Wide-character scratch buffers |
@@ -375,13 +479,17 @@ Public globals:
 
 ### `window.asm` — Window Skeleton
 
-Contains exclusively `MainWndProc` and `CreateMainWindow`. Fixed size 680 × 450 px, class `VGMainWnd`.
+Contains exclusively `MainWndProc` and `CreateMainWindow`. Fixed size 680 × 472 px, class `VGMainWnd`.
+
+On creation, calls `RegisterWindowMessageW("TaskbarCreated")` and stores the dynamic message ID in `g_wmTaskbarCreated` — used both in `MainWndProc` and to unlock the UIPI filter in `_OnCreate`.
 
 | Message | Action |
 |---------|--------|
 | `WM_CREATE` | `_OnCreate` (layout.asm) |
 | `WM_DESTROY` | `KillTimer`, `DeleteObject` (fonts + brush), `PostQuitMessage(0)` |
 | `WM_CLOSE` | `DestroyWindow` |
+| `WM_SIZE` (minimized + Shift held) | `_TrayAdd` — hide to system tray |
+| `WM_TRAY` | `_OnTrayMsg` — handle tray icon mouse events |
 | `WM_DROPFILES` | `_OnDropFiles` (drop.asm) |
 | `WM_NOTIFY` | `_OnNotify` (handlers.asm) — flag checkboxes in the ListView |
 | `WM_COMMAND` | `_OnCommand` (handlers.asm) — button clicks |
@@ -389,6 +497,7 @@ Contains exclusively `MainWndProc` and `CreateMainWindow`. Fixed size 680 × 450
 | `WM_SETTINGCHANGE` | `_ReadDarkMode` + `ApplyDarkMode` + `_ApplyThemeColors` + `InvalidateRect` |
 | `WM_ERASEBKGND` | `FillRect(g_hBrushBg)` — paints client area with theme background |
 | `WM_CTLCOLORSTATIC` | Dark mode: `SetBkMode(OPAQUE)` + colors + returns `g_hBrushBg` |
+| `TaskbarCreated` | `_TrayAdd` — re-registers tray icon after Explorer restart |
 
 ---
 
@@ -397,16 +506,29 @@ Contains exclusively `MainWndProc` and `CreateMainWindow`. Fixed size 680 × 450
 `_OnCreate(rcx=hwnd)` creates all widgets in a single pass:
 
 ```
-[y=  8] Driver status label  +  Protection status label  +  toggle button
-[y= 40] "Protected Paths" header  +  [Add path...]  +  [Remove selected]
-[y= 65] ListView Paths (h=270): columns Path/H/L/R/X
+[y=  8] Toggle button
+[y= 10] "Protected files/folders" header  +  [Add path...]  +  [Remove selected]
+[y= 40] ListView Paths (h=220): columns Path/H/L/R/X
          LVS_REPORT|LVS_SHOWSELALWAYS — multi-select enabled
-[y=345] "Trusted Processes" header  +  [Add]  +  [Remove]
-[y=365] Trusted edit box
-[y=370] ListView Trusted (h=80, ~3 rows): 1 column Application
+[y=278] "Allowed apps (trusted)" header
+[y=276] Trusted edit box  +  [Add]  +  [Remove]
+[y=308] ListView Trusted (h=80, ~3 rows): 1 column Application
+[y=396] Author/copyright static label (centered)
 ```
 
-Key calls: `InitCommonControlsEx(ICC_LISTVIEW_CLASSES)`, `SetWindowTheme(L"DarkMode_Explorer")`, `ChangeWindowMessageFilterEx(WM_DROPFILES, MSGFLT_ALLOW)`, `DragAcceptFiles(TRUE)`, `SetTimer(TIMER_STATUS_ID, 2000)`.
+Key calls: `InitCommonControlsEx(ICC_LISTVIEW_CLASSES)`, `DragAcceptFiles(TRUE)`, `ChangeWindowMessageFilterEx` for `WM_DROPFILES` / `WM_COPYDATA` / `WM_COPYGLOBALDATA` / `TaskbarCreated` (all MSGFLT_ALLOW — required for High-IL process to receive drops and shell messages from Medium-IL Explorer), `SetTimer(TIMER_STATUS_ID, 2000)`.
+
+---
+
+### `tray.asm` — System Tray
+
+| Procedure | Description |
+|-----------|-------------|
+| `_TrayAdd(rcx=hwnd)` | `Shell_NotifyIconW(NIM_ADD)` with icon handle and tooltip `"VaultGuard"` |
+| `_TrayRemove(rcx=hwnd)` | `Shell_NotifyIconW(NIM_DELETE)` |
+| `_OnTrayMsg(rcx=hwnd, rdx=lParam)` | `WM_LBUTTONDBLCLK` → `ShowWindow(SW_RESTORE)` + `SetForegroundWindow`; right-click → context menu (Restore / Exit) |
+
+`WM_TRAY` is a user-defined message (`WM_APP + 1`). `_TrayAdd` sets `uCallbackMessage = WM_TRAY` so all tray icon mouse events are routed to `MainWndProc`.
 
 ---
 
@@ -443,16 +565,32 @@ Key calls: `InitCommonControlsEx(ICC_LISTVIEW_CLASSES)`, `SetWindowTheme(L"DarkM
 
 ### `drop.asm` — Drag & Drop
 
-**`_OnDropFiles(rcx=HDROP)`:**
+**`_OnDropFiles(rcx=HDROP, rdx=hMainWnd)`:**
 
 1. `DragQueryFileW(0)` → first dropped path into `g_pathBuf`
-2. Last 4 chars are `.lnk` (via `wcscmp_ci`) → call `ResolveLnkPath` → `GetLongPathNameW` (canonical case)
-3. Auto-commits any prior `g_pendingPath` to registry via `ConfigSavePath(flags=0)` before overwriting
-4. Stores resolved path in `g_pendingPath` → `RefreshLists` → `DragFinish`
+2. Detects drop target: if cursor Y-position is over the Trusted panel → route to trusted add path
+3. Last 4 chars are `.lnk` (via `wcscmp_ci`) → call `ResolveLnkPath` → `GetLongPathNameW` (canonical case)
+4. **Trusted panel drop:** extracts filename component from path → lowercase → `IoctlAddTrusted` + `ConfigSaveTrusted`
+5. **Paths panel drop:** auto-commits any prior `g_pendingPath` to registry via `ConfigSavePath(flags=0)` before overwriting; stores resolved path in `g_pendingPath` → `RefreshLists`
+6. `DragFinish`
 
 **`ResolveLnkPath(rcx=.lnk path, rdx=out buf)`:**
 
 `CoInitialize` → `CoCreateInstance(CLSID_ShellLink)` → `QueryInterface(IID_IPersistFile)` → `IPersistFile::Load` → `IShellLinkW::GetPath` → full COM release chain → `CoUninitialize`
+
+---
+
+### `service.asm` — Windows Service Runtime
+
+| Procedure | Description |
+|-----------|-------------|
+| `_CliServiceInstall` | Opens SCM → `CreateServiceW` (name=`VaultGuard`, `AUTO_START`, binary=`"<exe>" /svcstart`) → `StartServiceW` |
+| `_CliServiceUninstall` | Opens SCM → `OpenServiceW` → `ControlService(STOP)` → `DeleteService` |
+| `_SvcStart` | Builds `SERVICE_TABLE_ENTRYW[2]` on stack → `StartServiceCtrlDispatcherW` → `ExitProcess(0)` |
+| `_SvcMain` | `CreateEventW(manual-reset)` → `RegisterServiceCtrlHandlerExW` → `SetServiceStatus(RUNNING, accepts=STOP\|SHUTDOWN\|PRESHUTDOWN)` → `WaitForSingleObject(INFINITE)` → `SetServiceStatus(STOPPED)` |
+| `_SvcCtrlHandler` | `STOP/SHUTDOWN/PRESHUTDOWN` → `SetServiceStatus(STOP_PENDING)` → `SetEvent(stop_event)` |
+
+`SERVICE_ACCEPT_PRESHUTDOWN` (`0x100`) is registered via `RegisterServiceCtrlHandlerExW` (the extended variant) to receive clean shutdown notification before system-level services stop.
 
 ---
 
@@ -493,6 +631,23 @@ Key calls: `InitCommonControlsEx(ICC_LISTVIEW_CLASSES)`, `SetWindowTheme(L"DarkM
 Switch comparison uses `wcscmp_ci` — fast ASCII case-insensitive wide-string compare, no `CharLowerW`. All switches work regardless of capitalization.
 
 Every exit path goes through `_CliFinish(code)` → `ConsoleSendEnter()` (injects `VK_RETURN` via `WriteConsoleInputW`) so CMD prompt reappears immediately without waiting for Enter.
+
+**Switch dispatch order:** `/?` → `/service` → `/enumitems` → `/enumtrusted` → `/protection` → `/setitem` → `/settrusted` → `/svcstart` → `/tray` → `/autostart` → unknown (return 0 → GUI mode)
+
+---
+
+### `export.asm` — CSV Export
+
+Owns all enumeration and file-writing logic for `/enumitems` and `/enumtrusted`.
+
+| Procedure | Description |
+|-----------|-------------|
+| `_CliEnumItems(rcx=outfile)` | Opens file → writes UTF-16LE BOM + CSV header → enumerates `HKCU\Software\VG\Paths` → writes path + 4 flag columns per row → closes file → `ExitProcess(0)` |
+| `_CliEnumTrusted(rcx=outfile)` | `IoctlEnumTrusted` (verifies driver ready) → opens file → writes UTF-16LE BOM + header → enumerates `HKCU\Software\VG\Trusted` → writes one name per row → `ExitProcess(0)` |
+| `_WriteBytes` (private) | `WriteFile` wrapper |
+| `_WriteWStr` (private) | Wide string → `wcslen_p` → `_WriteBytes` |
+
+CSV is written from the registry (authoritative persisted state) rather than the driver's enumeration buffer, which can lag after flag-change operations.
 
 ---
 
@@ -549,7 +704,8 @@ Build steps:
 ```
 [0] makecab IcoBuilder\vg.sys → LZX CAB → prepend 1078 B ICO header → ICON\vg.ico
 [1] rc.exe /c65001 vg.rc → vg.res
-[2] ml64.exe /c /Cp /Cx /Zi  (strutil res driver config cli theme listview handlers drop layout window main)
+[2] ml64.exe /c /Cp /Cx /Zi
+    (strutil res driver config cli export service theme listview handlers drop tray layout window main)
 [3] link.exe /SUBSYSTEM:WINDOWS /NODEFAULTLIB /MANIFEST:EMBED /MANIFESTUAC:requireAdministrator
     Libs: kernel32 user32 advapi32 shell32 ole32 dwmapi gdi32 comctl32 uxtheme cabinet
 [4] dumpbin — verify: no CRT imports, allowed DLL set only
@@ -595,6 +751,7 @@ All tests capture output via `Start-Process -RedirectStandardOutput`, which exer
 | Light mode | GUI works in light mode; ListView colors fall back to system defaults |
 | Trusted list removal | No per-item IOCTL — driver only supports clearing the entire list, requiring a full reload cycle |
 | Multi-file drop | Only the first dropped file/folder is processed per `WM_DROPFILES`; multi-file drops discard all but the first |
+| Service + GUI | In service mode the full GUI is active; no headless/service-only mode |
 
 ---
 
@@ -607,14 +764,17 @@ VaultGuard/
 │   ├── globals.inc     EXTRN declarations
 │   ├── main.asm        Entry point, globals, message loop
 │   ├── window.asm      MainWndProc + CreateMainWindow
-│   ├── layout.asm      _OnCreate — all controls
+│   ├── layout.asm      _OnCreate — all controls, UIPI message filters
 │   ├── theme.asm       Dark mode, Mica, ListView colors
 │   ├── handlers.asm    _OnCommand, _OnNotify, UpdateStatusBar, RefreshLists
-│   ├── drop.asm        WM_DROPFILES + ResolveLnkPath (IShellLink COM)
+│   ├── drop.asm        WM_DROPFILES + ResolveLnkPath (IShellLink COM) + trusted panel routing
+│   ├── tray.asm        System tray: _TrayAdd, _TrayRemove, _OnTrayMsg
 │   ├── listview.asm    ListView wrappers
 │   ├── driver.asm      SCM + IOCTL layer + EnsureDriverReady
 │   ├── config.asm      ConfigLoad/Save/Remove (registry)
-│   ├── cli.asm         CliDispatch — CLI interface
+│   ├── cli.asm         CliDispatch — CLI interface + RunCmdAndWait + _CliAutostart
+│   ├── export.asm      _CliEnumItems, _CliEnumTrusted — CSV export
+│   ├── service.asm     Windows service runtime — _SvcStart, _SvcMain, _SvcCtrlHandler
 │   ├── strutil.asm     String utilities + WideWriteLn/WideWriteConsole
 │   ├── res.asm         ExtractDriver — FDI decompression of CAB from icon
 │   ├── vg.rc           ICON 101 + RCDATA 102 (both = ICON/vg.ico)
