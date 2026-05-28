@@ -31,9 +31,9 @@ EXTRN wcs_ascii_lower_inplace   :PROC   ; strutil.asm
 EXTRN RefreshLists              :PROC   ; listview.asm
 EXTRN ConfigSavePath            :PROC   ; config.asm
 EXTRN ConfigSaveTrusted         :PROC   ; config.asm
-EXTRN EnsureDriverReady         :PROC   ; driver.asm
-EXTRN CloseDevice               :PROC   ; driver.asm
-EXTRN IoctlAddTrusted           :PROC   ; driver.asm
+EXTRN EnsureDriverReady         :PROC   ; device.asm
+EXTRN CloseDevice               :PROC   ; device.asm
+EXTRN IoctlAddTrusted           :PROC   ; ioctl.asm
 
 EXTRN g_pendingPath             :WORD   ; handlers.asm
 

@@ -171,7 +171,7 @@ _CliServiceInstall proc
     lea     rax, g_tempBuf
     mov     qword ptr [rsp+38h], rax
     mov     dword ptr [rsp+30h], SERVICE_ERROR_NORMAL
-    mov     dword ptr [rsp+28h], SERVICE_AUTO_START
+    mov     dword ptr [rsp+28h], SERVICE_DEMAND_START
     mov     dword ptr [rsp+20h], SERVICE_WIN32_OWN_PROCESS
     mov     r9d, SERVICE_ALL_ACCESS
     lea     r8, svc_display
@@ -346,6 +346,72 @@ _CliServiceUninstall proc
     pop     rbx
     ret
 _CliServiceUninstall endp
+
+; ==============================================================================
+; RemoveAppService  →  rax=1/0
+;
+; API-only helper for full product uninstall.  Stops and deletes the VaultGuard
+; Win32 service without printing or exiting; missing service is treated as clean.
+;
+; Stack: entry rsp%16=8; push rbx,rsi,rdi (+24)→0; sub 40h (+64)→0 ✓
+; [rsp+20h..3Bh] = SERVICE_STATUS for ControlService.
+; ==============================================================================
+PUBLIC RemoveAppService
+RemoveAppService proc
+    push    rbx
+    push    rsi
+    push    rdi
+    sub     rsp, 40h
+
+    mov     r8d, SC_MANAGER_CONNECT
+    xor     edx, edx
+    xor     ecx, ecx
+    call    OpenSCManagerW
+    test    rax, rax
+    jz      @ras_fail
+    mov     rbx, rax
+
+    mov     r8d, SERVICE_STOP + SERVICE_DELETE_SVC + SERVICE_QUERY_STATUS
+    lea     rdx, svc_name
+    mov     rcx, rbx
+    call    OpenServiceW
+    test    rax, rax
+    jz      @ras_missing
+    mov     rsi, rax
+
+    lea     r8, [rsp+20h]
+    mov     edx, SERVICE_CONTROL_STOP
+    mov     rcx, rsi
+    call    ControlService
+
+    mov     rcx, rsi
+    call    DeleteService
+    mov     edi, eax
+
+    mov     rcx, rsi
+    call    CloseServiceHandle
+    mov     rcx, rbx
+    call    CloseServiceHandle
+    test    edi, edi
+    jz      @ras_fail
+    mov     eax, 1
+    jmp     @ras_ret
+
+@ras_missing:
+    mov     rcx, rbx
+    call    CloseServiceHandle
+    mov     eax, 1
+    jmp     @ras_ret
+
+@ras_fail:
+    xor     eax, eax
+@ras_ret:
+    add     rsp, 40h
+    pop     rdi
+    pop     rsi
+    pop     rbx
+    ret
+RemoveAppService endp
 
 ; ==============================================================================
 ; _SvcCtrlHandler  rcx=dwCtrl  rdx=dwEventType  r8=lpEventData  r9=lpContext

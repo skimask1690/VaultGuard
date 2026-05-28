@@ -203,7 +203,7 @@ try {
 
     # ── Step 2: Assemble ──────────────────────────────────────────────────────
 
-    $Modules = @('strutil', 'res', 'driver', 'config', 'cli', 'export', 'service', 'theme', 'listview', 'handlers', 'drop', 'tray', 'layout', 'window', 'main')
+    $Modules = @('strutil', 'res', 'driver_scm', 'device', 'ioctl', 'config', 'cli', 'export', 'service', 'theme', 'listview', 'handlers', 'drop', 'tray', 'layout', 'window', 'main')
 
     if ($OK) {
         Write-Banner '[2] Assembling modules'

@@ -39,7 +39,13 @@ EXTRN IoctlAddTrusted       :PROC
 EXTRN IoctlRemoveTrusted    :PROC
 EXTRN IoctlEnumPaths        :PROC
 EXTRN IoctlEnumTrusted      :PROC
-EXTRN IoctlClearAll         :PROC
+EXTRN InstallDriver         :PROC
+EXTRN UninstallDriver       :PROC
+EXTRN StartDriver           :PROC
+EXTRN StopDriver            :PROC
+EXTRN IsDriverInstalled     :PROC
+EXTRN SetDriverStartType    :PROC
+EXTRN DeleteDriverFile      :PROC
 
 EXTRN wcslen_p              :PROC
 EXTRN wcscmp_ci             :PROC
@@ -49,6 +55,7 @@ EXTRN ConsoleSendEnter      :PROC
 
 EXTRN _CliServiceInstall    :PROC
 EXTRN _CliServiceUninstall  :PROC
+EXTRN RemoveAppService      :PROC
 EXTRN _SvcStart             :PROC
 
 EXTRN _CliEnumItems         :PROC
@@ -59,6 +66,7 @@ EXTRN ConfigRemovePath      :PROC
 EXTRN ConfigSaveTrusted     :PROC
 EXTRN ConfigRemoveTrusted   :PROC
 EXTRN ConfigLoad            :PROC
+EXTRN ConfigDeleteAll       :PROC
 
 EXTRN g_statusResult        :BYTE
 
@@ -75,8 +83,15 @@ sw_help_ddash_h dw '-','-','h',0
 sw_help_dash_help dw '-','h','e','l','p',0
 sw_help_ddash_help dw '-','-','h','e','l','p',0
 sw_service      dw '/','s','e','r','v','i','c','e',0
+sw_driver       dw '/','d','r','i','v','e','r',0
+sw_uninstall    dw '/','u','n','i','n','s','t','a','l','l',0
 str_install     dw 'i','n','s','t','a','l','l',0
 str_uninstall   dw 'u','n','i','n','s','t','a','l','l',0
+str_start       dw 's','t','a','r','t',0
+str_stop        dw 's','t','o','p',0
+str_auto        dw 'a','u','t','o',0
+str_manual      dw 'm','a','n','u','a','l',0
+str_startup     dw 's','t','a','r','t','u','p',0
 sw_svcstart     dw '/','s','v','c','s','t','a','r','t',0
 sw_tray         dw '/','t','r','a','y',0
 sw_autostart    dw '/','a','u','t','o','s','t','a','r','t',0
@@ -136,6 +151,16 @@ msg_h7  dw ' ',' ',' ',' ','S','h','o','w',' ','t','h','i','s',' ','h','e','l','
 msg_h_sv1 dw ' ',' ','/','s','e','r','v','i','c','e',' ','i','n','s','t','a','l','l','|','u','n','i','n','s','t','a','l','l',0
 msg_h_sv2 dw ' ',' ',' ',' ','R','e','g','i','s','t','e','r',' ','o','r',' ','r','e','m','o','v','e',' '
           dw 'v','g','.','e','x','e',' ','a','s',' ','a',' ','W','i','n','d','o','w','s',' ','s','e','r','v','i','c','e','.',0
+msg_h_drv1 dw ' ',' ','/','d','r','i','v','e','r',' ','i','n','s','t','a','l','l',' ','[','m','a','n','u','a','l','|','a','u','t','o',']',0
+msg_h_drv2 dw ' ',' ','/','d','r','i','v','e','r',' ','u','n','i','n','s','t','a','l','l',0
+msg_h_drv3 dw ' ',' ','/','d','r','i','v','e','r',' ','s','t','a','r','t',' ','|',' ','s','t','o','p',0
+msg_h_drv4 dw ' ',' ','/','d','r','i','v','e','r',' ','s','t','a','r','t','u','p',' ','m','a','n','u','a','l','|','a','u','t','o',0
+msg_h_drv5 dw ' ',' ',' ',' ','M','a','n','a','g','e',' ','c','l','r','c','d',' ','d','r','i','v','e','r',' '
+           dw 's','e','r','v','i','c','e','.', ' ','D','e','f','a','u','l','t',':',' ','m','a','n','u','a','l','.',0
+msg_h_un1 dw ' ',' ','/','u','n','i','n','s','t','a','l','l',0
+msg_h_un2 dw ' ',' ',' ',' ','S','t','o','p',' ','a','n','d',' ','r','e','m','o','v','e',' '
+          dw 's','e','r','v','i','c','e','s',',',' ','d','r','i','v','e','r',',',' ','f','i','l','e','s',' '
+          dw 'a','n','d',' ','r','e','g','i','s','t','r','y',' ','c','o','n','f','i','g','.',0
 msg_h8  dw ' ',' ','/','e','n','u','m','i','t','e','m','s',' ','<','f','i','l','e','>',0
 msg_h9  dw ' ',' ',' ',' ','E','x','p','o','r','t',' ','p','r','o','t','e','c','t','e','d',' ','f','o','l','d','e','r','s',' ','t','o',' ','C','S','V','.',0
 msg_h10 dw ' ',' ','/','e','n','u','m','t','r','u','s','t','e','d',' ','<','f','i','l','e','>',0
@@ -167,9 +192,12 @@ msg_ok_prot_on    dw 'P','r','o','t','e','c','t','i','o','n',' ','e','n','a','b'
 msg_ok_prot_off   dw 'P','r','o','t','e','c','t','i','o','n',' ','d','i','s','a','b','l','e','d','.',0
 msg_ok_setitem    dw 'I','t','e','m',' ','u','p','d','a','t','e','d','.',0
 msg_ok_settrusted dw 'T','r','u','s','t','e','d',' ','a','p','p',' ','u','p','d','a','t','e','d','.',0
+msg_ok_driver     dw 'D','r','i','v','e','r',' ','u','p','d','a','t','e','d','.',0
+msg_ok_uninstall  dw 'U','n','i','n','s','t','a','l','l',' ','c','o','m','p','l','e','t','e','.',0
 msg_err_nodrv     dw 'E','r','r','o','r',':',' ','D','r','i','v','e','r',' ','n','o','t',' ','r','u','n','n','i','n','g','.',0
 msg_err_arg       dw 'E','r','r','o','r',':',' ','I','n','v','a','l','i','d',' ','a','r','g','u','m','e','n','t','.',0
 msg_err_ioctl     dw 'E','r','r','o','r',':',' ','D','r','i','v','e','r',' ','I','O','C','T','L',' ','f','a','i','l','e','d','.',0
+msg_err_driver    dw 'E','r','r','o','r',':',' ','D','r','i','v','e','r',' ','m','a','n','a','g','e','m','e','n','t',' ','f','a','i','l','e','d','.',0
 
 ; ==============================================================================
 ; MUTABLE DATA
@@ -227,6 +255,20 @@ _CliHelp proc
     lea     rcx, msg_h_sv1
     call    WideWriteLn
     lea     rcx, msg_h_sv2
+    call    WideWriteLn
+    lea     rcx, msg_h_drv1
+    call    WideWriteLn
+    lea     rcx, msg_h_drv2
+    call    WideWriteLn
+    lea     rcx, msg_h_drv3
+    call    WideWriteLn
+    lea     rcx, msg_h_drv4
+    call    WideWriteLn
+    lea     rcx, msg_h_drv5
+    call    WideWriteLn
+    lea     rcx, msg_h_un1
+    call    WideWriteLn
+    lea     rcx, msg_h_un2
     call    WideWriteLn
     lea     rcx, msg_h8
     call    WideWriteLn
@@ -490,6 +532,201 @@ _CliAutostart proc
 _CliAutostart endp
 
 ; ==============================================================================
+; _CliDriver  rcx=argv[2], rdx=argv, r8=argc  →  never returns
+;
+; API-only driver lifecycle for the real protection service "clrcd".
+;   install [manual|auto]   create service (default: manual)
+;   uninstall               stop + DeleteService + remove vg.sys
+;   start | stop            runtime control (no reinstall)
+;   startup manual|auto     change start type without reinstall (next boot)
+;
+; Stack: push rbx,rsi,rdi,r12 (+32); sub 28h (+40); 8+72=80; 0 ✓
+; ==============================================================================
+_CliDriver proc
+    push    rbx
+    push    rsi
+    push    rdi
+    push    r12
+    sub     rsp, 28h
+
+    mov     rbx, rcx                    ; subcommand
+    mov     rsi, rdx                    ; argv[]
+    mov     edi, r8d                    ; argc
+
+    ; ── install [manual|auto] ───────────────────────────────────────────────
+    lea     rdx, str_install
+    mov     rcx, rbx
+    call    wcscmp_ci
+    test    eax, eax
+    jnz     @drv_try_uninstall
+
+    call    IsDriverInstalled
+    test    eax, eax
+    jnz     @drv_install_set_type
+
+    call    InstallDriver               ; CreateServiceW uses SERVICE_DEMAND_START
+    test    eax, eax
+    jz      @drv_err
+
+@drv_install_set_type:
+    cmp     edi, 4
+    jl      @drv_manual                  ; default: manual
+    mov     r12, qword ptr [rsi + 3*8]   ; argv[3] = manual|auto
+    lea     rdx, str_auto
+    mov     rcx, r12
+    call    wcscmp_ci
+    test    eax, eax
+    jz      @drv_auto
+    lea     rdx, str_manual
+    mov     rcx, r12
+    call    wcscmp_ci
+    test    eax, eax
+    jz      @drv_manual
+    jmp     @drv_bad_arg
+
+    ; ── uninstall ───────────────────────────────────────────────────────────
+@drv_try_uninstall:
+    lea     rdx, str_uninstall
+    mov     rcx, rbx
+    call    wcscmp_ci
+    test    eax, eax
+    jnz     @drv_try_start
+
+    call    IsDriverInstalled
+    test    eax, eax
+    jz      @drv_delete_file_only
+    call    UninstallDriver
+    test    eax, eax
+    jz      @drv_err
+@drv_delete_file_only:
+    call    DeleteDriverFile             ; best-effort after SCM delete
+    jmp     @drv_ok
+
+    ; ── start ───────────────────────────────────────────────────────────────
+@drv_try_start:
+    lea     rdx, str_start
+    mov     rcx, rbx
+    call    wcscmp_ci
+    test    eax, eax
+    jnz     @drv_try_stop
+    call    StartDriver
+    test    eax, eax
+    jz      @drv_err
+    jmp     @drv_ok
+
+    ; ── stop ────────────────────────────────────────────────────────────────
+@drv_try_stop:
+    lea     rdx, str_stop
+    mov     rcx, rbx
+    call    wcscmp_ci
+    test    eax, eax
+    jnz     @drv_try_startup
+    call    StopDriver
+    test    eax, eax
+    jz      @drv_err
+    jmp     @drv_ok
+
+    ; ── startup manual|auto ─────────────────────────────────────────────────
+    ; Change start type without reinstall. SCM rewrites HKLM\...\clrcd\Start
+    ; via ChangeServiceConfigW — running driver is NOT affected.
+@drv_try_startup:
+    lea     rdx, str_startup
+    mov     rcx, rbx
+    call    wcscmp_ci
+    test    eax, eax
+    jnz     @drv_bad_arg
+
+    cmp     edi, 4
+    jl      @drv_bad_arg                ; startup requires argv[3] = manual|auto
+    mov     r12, qword ptr [rsi + 3*8]
+    lea     rdx, str_auto
+    mov     rcx, r12
+    call    wcscmp_ci
+    test    eax, eax
+    jz      @drv_auto
+    lea     rdx, str_manual
+    mov     rcx, r12
+    call    wcscmp_ci
+    test    eax, eax
+    jz      @drv_manual
+    jmp     @drv_bad_arg
+
+@drv_auto:
+    mov     ecx, SERVICE_AUTO_START
+    call    SetDriverStartType
+    test    eax, eax
+    jz      @drv_err
+    jmp     @drv_ok
+
+@drv_manual:
+    mov     ecx, SERVICE_DEMAND_START
+    call    SetDriverStartType
+    test    eax, eax
+    jz      @drv_err
+
+@drv_ok:
+    lea     rcx, msg_ok_driver
+    call    WideWriteLn
+    xor     ecx, ecx
+    call    _CliFinish
+
+@drv_bad_arg:
+    lea     rcx, msg_err_arg
+    call    WideWriteLn
+    mov     ecx, 1
+    call    _CliFinish
+
+@drv_err:
+    lea     rcx, msg_err_driver
+    call    WideWriteLn
+    mov     ecx, 1
+    call    _CliFinish
+
+    add     rsp, 28h            ; unreachable
+    pop     r12
+    pop     rdi
+    pop     rsi
+    pop     rbx
+    ret
+_CliDriver endp
+
+; ==============================================================================
+; _CliFullUninstall  →  never returns
+;
+; Stops userspace protection if reachable, removes the app service, removes the
+; clrcd service, deletes the extracted driver file, and drops HKCU config.
+; Individual cleanup failures are intentionally best-effort so stale partial
+; installs can still be cleaned in one pass.
+;
+; Stack: entry rsp%16=8; sub 28h → 0 ✓
+; ==============================================================================
+_CliFullUninstall proc
+    sub     rsp, 28h
+
+    call    OpenDevice
+    test    eax, eax
+    jz      @un_no_device
+    xor     ecx, ecx
+    call    IoctlSetActive
+    call    CloseDevice
+
+@un_no_device:
+    call    RemoveAppService
+    call    StopDriver
+    call    UninstallDriver
+    call    DeleteDriverFile
+    call    ConfigDeleteAll
+
+    lea     rcx, msg_ok_uninstall
+    call    WideWriteLn
+    xor     ecx, ecx
+    call    _CliFinish
+
+    add     rsp, 28h            ; unreachable
+    ret
+_CliFullUninstall endp
+
+; ==============================================================================
 ; CliDispatch  rcx=argv[1]  rdx=argv  r8=argc  →  rax=0 if unknown (→ GUI)
 ; Stack: push rbx,rsi,rdi,r12,r13,r14 (+48); sub 38h (+56); 8+104=112; 0 ✓
 ; ==============================================================================
@@ -570,7 +807,7 @@ CliDispatch proc
     mov     rcx, rbx
     call    wcscmp_ci
     test    eax, eax
-    jnz     @cd_try_enumitems
+    jnz     @cd_try_driver
 
     cmp     edi, 3
     jl      @cd_bad_arg
@@ -590,6 +827,30 @@ CliDispatch proc
     test    eax, eax
     jnz     @cd_bad_arg
     call    _CliServiceUninstall        ; never returns
+
+    ; ── /driver install [manual|auto]  OR  /driver start|stop|manual|auto  OR  /driver uninstall
+@cd_try_driver:
+    lea     rdx, sw_driver
+    mov     rcx, rbx
+    call    wcscmp_ci
+    test    eax, eax
+    jnz     @cd_try_uninstall
+
+    cmp     edi, 3
+    jl      @cd_bad_arg
+    mov     rcx, qword ptr [rsi + 2*8]  ; argv[2] = driver subcommand
+    mov     rdx, rsi
+    mov     r8d, edi
+    call    _CliDriver                  ; never returns
+
+    ; ── /uninstall  (full product cleanup) ──────────────────────────────────
+@cd_try_uninstall:
+    lea     rdx, sw_uninstall
+    mov     rcx, rbx
+    call    wcscmp_ci
+    test    eax, eax
+    jnz     @cd_try_enumitems
+    call    _CliFullUninstall           ; never returns
 
     ; ── /enumitems <file> ────────────────────────────────────────────────────
 @cd_try_enumitems:

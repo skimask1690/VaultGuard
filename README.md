@@ -61,7 +61,7 @@ The same binary runs as a full Win32 GUI application or a scriptable CLI tool.
 | UI | Win32 — Dark Mode, Mica (DWM), PerMonitorV2 DPI, system tray |
 | Driver | `vg.sys` — FSFilter Content Screener, Altitude 389991 |
 | Driver service name | `clrcd` |
-| VaultGuard service name | `VaultGuard` (optional, auto-start) |
+| VaultGuard service name | `VaultGuard` (optional, manual-start by default) |
 | Registry | `HKCU\Software\VG\Paths` · `HKCU\Software\VG\Trusted` |
 | Requires | Windows 11 x64, Administrator |
 | Driver signature | Signed March 18, 2014 — loads via legacy cross-sign compatibility, no test-signing needed |
@@ -93,7 +93,9 @@ vg.exe /enumitems   out.csv
 vg.exe /enumtrusted trust.csv
 vg.exe /tray                        start minimized to system tray
 vg.exe /autostart on                register Task Scheduler logon entry
-vg.exe /service install             register and start as Windows service
+vg.exe /service install             register app service as manual-start
+vg.exe /driver install auto          install clrcd and set automatic driver start
+vg.exe /uninstall                   stop and remove services, driver and config
 vg.exe /?
 ```
 
@@ -110,6 +112,8 @@ flowchart TD
     B -->|No| D[CreateMainWindow GUI]
     C --> E{Known switch?}
     E -->|/service| SVC[_CliServiceInstall/Uninstall]
+    E -->|/driver| DRV[_CliDriver clrcd lifecycle]
+    E -->|/uninstall| UN[_CliFullUninstall cleanup]
     E -->|/autostart| AS[_CliAutostart schtasks.exe]
     E -->|/tray| TR[g_startMinimized=1 → GUI]
     E -->|/svcstart| SS[_SvcStart → StartServiceCtrlDispatcherW]
@@ -226,6 +230,10 @@ vg.exe /enumtrusted   <out.csv>
 vg.exe /tray
 vg.exe /autostart     on | off
 vg.exe /service       install | uninstall
+vg.exe /driver        install [manual | auto]
+vg.exe /driver        start | stop | manual | auto
+vg.exe /driver        uninstall
+vg.exe /uninstall
 ```
 
 ### Command Summary
@@ -241,6 +249,11 @@ vg.exe /service       install | uninstall
 | `/tray` | Start minimized to system tray | `vg.exe /tray` |
 | `/autostart on\|off` | Register/remove Task Scheduler logon entry | `vg.exe /autostart on` |
 | `/service install\|uninstall` | Register/remove VaultGuard Windows service | `vg.exe /service install` |
+| `/driver install [manual\|auto]` | Install `clrcd` driver service; default start type is manual | `vg.exe /driver install auto` |
+| `/driver start\|stop` | Start or stop the `clrcd` driver service | `vg.exe /driver start` |
+| `/driver manual\|auto` | Change `clrcd` startup type via `ChangeServiceConfigW` | `vg.exe /driver auto` |
+| `/driver uninstall` | Stop and remove `clrcd`; delete extracted `vg.sys` best-effort | `vg.exe /driver uninstall` |
+| `/uninstall` | Full cleanup: disable protection, remove app service, remove driver service/file, delete HKCU config | `vg.exe /uninstall` |
 
 ### CSV Output Formats
 
@@ -276,7 +289,7 @@ vg.exe /service uninstall
 
 Registers `vg.exe` itself as a Windows service named **`VaultGuard`**:
 
-- **Start type:** `SERVICE_AUTO_START` — starts automatically at boot
+- **Start type:** `SERVICE_DEMAND_START` — manual by default
 - **Binary path:** `"<full path to vg.exe>" /svcstart`
 - On install: service is created **and immediately started** via `StartServiceW`
 - On uninstall: service is stopped (if running) and deleted via `DeleteService`
@@ -292,6 +305,34 @@ _SvcMain → RegisterServiceCtrlHandlerExW → SetServiceStatus(RUNNING)
 Accepted controls: `SERVICE_CONTROL_STOP`, `SERVICE_CONTROL_SHUTDOWN`, `SERVICE_CONTROL_PRESHUTDOWN`.
 
 > The service mode runs the full GUI (window + message loop) — the same binary, no separate service-only build. The SCM thread acts as a watchdog; the main thread runs the normal Win32 message loop.
+
+### Driver Service (`/driver ...`)
+
+```
+vg.exe /driver install
+vg.exe /driver install auto
+vg.exe /driver manual
+vg.exe /driver auto
+vg.exe /driver start
+vg.exe /driver stop
+vg.exe /driver uninstall
+```
+
+Manages the real protection service, **`clrcd`**, through WinAPI/SCM calls only:
+
+- `install` extracts `vg.sys`, creates the kernel driver service and leaves it `SERVICE_DEMAND_START` by default
+- `install auto` creates the service and changes start type to `SERVICE_AUTO_START`
+- `manual` / `auto` call `ChangeServiceConfigW` for the existing `clrcd` service
+- `start` / `stop` call `StartServiceW` / `ControlService`
+- `uninstall` stops and deletes `clrcd`, then deletes `%SystemRoot%\System32\drivers\vg.sys` best-effort
+
+### Full Uninstall (`/uninstall`)
+
+```
+vg.exe /uninstall
+```
+
+Disables live protection if the device is open, removes the optional `VaultGuard` app service, stops/deletes `clrcd`, deletes the extracted driver file best-effort, and removes `HKCU\Software\VG`.
 
 ### Logon Autostart (`/autostart on`)
 
@@ -362,11 +403,11 @@ vg.exe /autostart on
 vg.exe /autostart off
 ```
 
-### Install as a Windows service (boot-time start)
+### Install as a Windows service (manual start)
 
 ```powershell
 vg.exe /service install
-# Service VaultGuard created (AUTO_START) and started immediately.
+# Service VaultGuard created (DEMAND_START) and started immediately.
 
 # To remove:
 vg.exe /service uninstall
@@ -446,7 +487,7 @@ The driver holds no persistent state across reboots.
 
 ## Module Analysis
 
-15 MASM source files, each with a single defined responsibility.
+17 MASM source files, each with a single defined responsibility.
 
 ### `main.asm` — Entry Point & Globals
 
@@ -584,7 +625,7 @@ Key calls: `InitCommonControlsEx(ICC_LISTVIEW_CLASSES)`, `DragAcceptFiles(TRUE)`
 
 | Procedure | Description |
 |-----------|-------------|
-| `_CliServiceInstall` | Opens SCM → `CreateServiceW` (name=`VaultGuard`, `AUTO_START`, binary=`"<exe>" /svcstart`) → `StartServiceW` |
+| `_CliServiceInstall` | Opens SCM → `CreateServiceW` (name=`VaultGuard`, `DEMAND_START`, binary=`"<exe>" /svcstart`) → `StartServiceW` |
 | `_CliServiceUninstall` | Opens SCM → `OpenServiceW` → `ControlService(STOP)` → `DeleteService` |
 | `_SvcStart` | Builds `SERVICE_TABLE_ENTRYW[2]` on stack → `StartServiceCtrlDispatcherW` → `ExitProcess(0)` |
 | `_SvcMain` | `CreateEventW(manual-reset)` → `RegisterServiceCtrlHandlerExW` → `SetServiceStatus(RUNNING, accepts=STOP\|SHUTDOWN\|PRESHUTDOWN)` → `WaitForSingleObject(INFINITE)` → `SetServiceStatus(STOPPED)` |
@@ -594,7 +635,7 @@ Key calls: `InitCommonControlsEx(ICC_LISTVIEW_CLASSES)`, `DragAcceptFiles(TRUE)`
 
 ---
 
-### `driver.asm` — SCM & IOCTL Layer
+### Driver Layer — SCM, Device, IOCTL
 
 | Property | Value |
 |----------|-------|
@@ -607,10 +648,10 @@ Key calls: `InitCommonControlsEx(ICC_LISTVIEW_CLASSES)`, `DragAcceptFiles(TRUE)`
 
 | Procedure | Description |
 |-----------|-------------|
-| `OpenDevice` | `CreateFileW("\\.\BE79...", GENERIC_RW, ...)` |
-| `InstallDriver` | `ExtractDriver()` → `CreateServiceW` |
-| `StartDriver` | `StartServiceW` |
-| `EnsureDriverReady` | `OpenDevice` → fail → `InstallDriver` → `StartDriver` → `OpenDevice` retry |
+| `driver_scm.asm` | `InstallDriver`, `StartDriver`, `StopDriver`, `UninstallDriver`, `SetDriverStartType`, `DeleteDriverFile` |
+| `device.asm` | `OpenDevice`, `CloseDevice`, `EnsureDriverReady` |
+| `ioctl.asm` | `IoctlSetActive`, path/trusted add-remove, enum, status, clear-all wrappers |
+| `driver_consts.inc` | Shared driver-layer symbol declarations (`clrcd`, device path, status/drive buffers) |
 
 ---
 
@@ -623,6 +664,7 @@ Key calls: `InitCommonControlsEx(ICC_LISTVIEW_CLASSES)`, `DragAcceptFiles(TRUE)`
 | `ConfigRemovePath(rcx=path)` | `RegOpenKeyExW` → `RegDeleteValueW` |
 | `ConfigSaveTrusted(rcx=name_lowercase)` | `RegCreateKeyExW` → `RegSetValueExW(name, 1)` |
 | `ConfigRemoveTrusted(rcx=name)` | `RegOpenKeyExW` → `RegDeleteValueW` |
+| `ConfigDeleteAll` | Deletes `Paths`, `Trusted`, then `HKCU\Software\VG` via `RegDeleteKeyW` |
 
 ---
 
@@ -632,7 +674,7 @@ Switch comparison uses `wcscmp_ci` — fast ASCII case-insensitive wide-string c
 
 Every exit path goes through `_CliFinish(code)` → `ConsoleSendEnter()` (injects `VK_RETURN` via `WriteConsoleInputW`) so CMD prompt reappears immediately without waiting for Enter.
 
-**Switch dispatch order:** `/?` → `/service` → `/enumitems` → `/enumtrusted` → `/protection` → `/setitem` → `/settrusted` → `/svcstart` → `/tray` → `/autostart` → unknown (return 0 → GUI mode)
+**Switch dispatch order:** `/?` → `/service` → `/driver` → `/uninstall` → `/enumitems` → `/enumtrusted` → `/protection` → `/setitem` → `/settrusted` → `/svcstart` → `/tray` → `/autostart` → unknown (return 0 → GUI mode)
 
 ---
 
@@ -717,8 +759,8 @@ Intermediates (`*.obj`, `*.res`, `*.pdb`) are deleted on completion.
 
 ## Regression Tests
 
-`tests/cli_test.ps1` — **33 regression tests**, CLI interface only, no GUI required.  
-Requires `bin\vg.exe`, loaded driver, and Administrator context.
+`tests/cli_test.ps1` — **84 regression checks**, CLI interface only, no GUI required.  
+Requires `bin\vg.exe` and Administrator context; the script installs/starts/removes `clrcd` as needed.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tests\cli_test.ps1
@@ -770,8 +812,11 @@ VaultGuard/
 │   ├── drop.asm        WM_DROPFILES + ResolveLnkPath (IShellLink COM) + trusted panel routing
 │   ├── tray.asm        System tray: _TrayAdd, _TrayRemove, _OnTrayMsg
 │   ├── listview.asm    ListView wrappers
-│   ├── driver.asm      SCM + IOCTL layer + EnsureDriverReady
-│   ├── config.asm      ConfigLoad/Save/Remove (registry)
+│   ├── driver_scm.asm  clrcd SCM lifecycle + driver file cleanup
+│   ├── device.asm      Device open/close + EnsureDriverReady
+│   ├── ioctl.asm       DeviceIoControl wrappers + path marshalling
+│   ├── driver_consts.inc shared driver-layer declarations
+│   ├── config.asm      ConfigLoad/Save/Remove/DeleteAll (registry)
 │   ├── cli.asm         CliDispatch — CLI interface + RunCmdAndWait + _CliAutostart
 │   ├── export.asm      _CliEnumItems, _CliEnumTrusted — CSV export
 │   ├── service.asm     Windows service runtime — _SvcStart, _SvcMain, _SvcCtrlHandler
@@ -780,7 +825,7 @@ VaultGuard/
 │   ├── vg.rc           ICON 101 + RCDATA 102 (both = ICON/vg.ico)
 │   └── vg.manifest     requireAdministrator, Win11 GUID, perMonitorV2
 ├── tests/
-│   └── cli_test.ps1    33 regression tests (CLI, registry, CSV)
+│   └── cli_test.ps1    CLI, driver lifecycle, registry, CSV, enforcement, uninstall tests
 ├── IcoBuilder/
 │   ├── vg.sys          Third-party driver — PROMOSOFT CORPORATION (2014)
 │   └── vg.ico          Base icon (ICO header used as CAB wrapper)

@@ -17,6 +17,7 @@ $RESULT = "$PSScriptRoot\results.txt"
 $script:PASS  = 0
 $script:FAIL  = 0
 $script:SKIP  = 0
+$script:FullUninstallRan = $false
 $script:Lines = [System.Collections.Generic.List[string]]::new()
 
 # test dirs
@@ -148,6 +149,26 @@ function driver_loaded {
     return ($null -ne $svc -and $svc.Status -eq 'Running')
 }
 
+function driver_service {
+    Get-CimInstance Win32_SystemDriver -Filter "Name='clrcd'" -EA SilentlyContinue
+}
+
+function app_service {
+    Get-CimInstance Win32_Service -Filter "Name='VaultGuard'" -EA SilentlyContinue
+}
+
+function clean_driver_service {
+    $svc = Get-CimInstance Win32_SystemDriver -Filter "Name='clrcd'" -EA SilentlyContinue
+    if ($null -ne $svc) {
+        if ($svc.State -eq 'Running') {
+            Invoke-CimMethod -InputObject $svc -MethodName StopService | Out-Null
+            Start-Sleep -Milliseconds 300
+        }
+        Invoke-CimMethod -InputObject $svc -MethodName Delete | Out-Null
+    }
+    Remove-Item "$env:SystemRoot\System32\drivers\vg.sys" -Force -EA SilentlyContinue
+}
+
 # -- preflight -----------------------------------------------------------------
 
 if (-not (Test-Path $VG)) { Write-Host "ERROR: $VG not found" -ForegroundColor Red; exit 1 }
@@ -175,6 +196,49 @@ if ($h -match 'VaultGuard CLI')  { ok "/?  contains 'VaultGuard CLI'"  } else { 
 if ($h -match 'Commands:')        { ok "/?  contains 'Commands:'"        } else { fail "/?  Commands: missing" }
 if ($h -match '/enumitems')       { ok "/?  lists /enumitems"            } else { fail "/?  /enumitems missing" }
 if ($h -match '/settrusted')      { ok "/?  lists /settrusted"           } else { fail "/?  /settrusted missing" }
+if ($h -match '/driver')          { ok "/?  lists /driver"               } else { fail "/?  /driver missing" }
+if ($h -match '/uninstall')       { ok "/?  lists /uninstall"            } else { fail "/?  /uninstall missing" }
+
+# ==============================================================================
+banner "[1b] /driver lifecycle  -  API-backed clrcd service"
+# ==============================================================================
+
+clean_driver_service
+
+$ec = vg @("/driver", "install")
+if ($ec -eq 0) { ok "driver install: exit 0" } else { fail "driver install: exit $ec" }
+$d = driver_service
+if ($null -ne $d) { ok "driver install: clrcd exists" } else { fail "driver install: clrcd missing" }
+if ($null -ne $d -and $d.StartMode -eq 'Manual') { ok "driver install: default Manual" } else { fail "driver install: StartMode=$($d.StartMode) (expected Manual)" }
+
+$ec = vg @("/driver", "startup", "auto")
+$d = driver_service
+if ($ec -eq 0) { ok "driver startup auto: exit 0" } else { fail "driver startup auto: exit $ec" }
+if ($null -ne $d -and $d.StartMode -eq 'Auto') { ok "driver startup auto: StartMode Auto" } else { fail "driver startup auto: StartMode=$($d.StartMode)" }
+
+$ec = vg @("/driver", "startup", "manual")
+$d = driver_service
+if ($ec -eq 0) { ok "driver startup manual: exit 0" } else { fail "driver startup manual: exit $ec" }
+if ($null -ne $d -and $d.StartMode -eq 'Manual') { ok "driver startup manual: StartMode Manual" } else { fail "driver startup manual: StartMode=$($d.StartMode)" }
+
+$ec = vg @("/driver", "install", "auto")
+$d = driver_service
+if ($ec -eq 0) { ok "driver install auto: exit 0" } else { fail "driver install auto: exit $ec" }
+if ($null -ne $d -and $d.StartMode -eq 'Auto') { ok "driver install auto: StartMode Auto" } else { fail "driver install auto: StartMode=$($d.StartMode)" }
+
+$ec = vg @("/driver", "start")
+if ($ec -eq 0) { ok "driver start: exit 0" } else { fail "driver start: exit $ec" }
+
+$ec = vg @("/driver", "stop")
+if ($ec -eq 0) { ok "driver stop: exit 0" } else { fail "driver stop: exit $ec" }
+
+$ec = vg @("/driver", "uninstall")
+$d = driver_service
+if ($ec -eq 0) { ok "driver uninstall: exit 0" } else { fail "driver uninstall: exit $ec" }
+if ($null -eq $d) { ok "driver uninstall: clrcd removed" } else { fail "driver uninstall: clrcd still present" }
+
+$ec = vg @("/driver", "install")
+if ($ec -eq 0) { ok "driver reinstall for remaining tests: exit 0" } else { fail "driver reinstall for remaining tests: exit $ec" }
 
 # ==============================================================================
 banner "[2] /setitem  -  individual flags -> registry"
@@ -567,11 +631,32 @@ if (-not $runEnforce) {
 }
 
 # ==============================================================================
+banner "[17] /uninstall  -  full product cleanup"
+# ==============================================================================
+
+vg @("/setitem", $PA, "Hidden") | Out-Null
+vg @("/settrusted", "notepad.exe", "Enabled") | Out-Null
+vg @("/service", "install") | Out-Null
+vg @("/driver", "install", "auto") | Out-Null
+
+$ec = vg @("/uninstall")
+$script:FullUninstallRan = ($ec -eq 0)
+if ($ec -eq 0) { ok "full uninstall: exit 0" } else { fail "full uninstall: exit $ec" }
+
+$appSvcAfter = app_service
+$drvSvcAfter = driver_service
+if ($null -eq $appSvcAfter) { ok "full uninstall: app service removed" } else { fail "full uninstall: app service still present" }
+if ($null -eq $drvSvcAfter) { ok "full uninstall: clrcd service removed" } else { fail "full uninstall: clrcd still present" }
+if (-not (Test-Path "HKCU:\Software\VG")) { ok "full uninstall: HKCU Software\\VG removed" } else { fail "full uninstall: HKCU Software\\VG still present" }
+
+# ==============================================================================
 # cleanup
 # ==============================================================================
 
 clean_registry
-vg @("/protection", "on") | Out-Null    # leave protection on
+if (-not $script:FullUninstallRan) {
+    vg @("/protection", "on") | Out-Null    # leave protection on unless /uninstall was verified
+}
 
 if (-not $KeepOutput) { Remove-Item $OUT -Recurse -Force -EA SilentlyContinue }
 

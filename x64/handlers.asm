@@ -44,7 +44,7 @@ EXTRN ConfigRemovePath          :PROC
 EXTRN ConfigSaveTrusted         :PROC
 EXTRN ConfigRemoveTrusted       :PROC
 
-EXTRN g_statusResult            :BYTE   ; defined in driver.asm
+EXTRN g_statusResult            :BYTE   ; defined in driver_scm.asm
 
 ; ── Sibling modules ───────────────────────────────────────────────────────────
 EXTRN RefreshLists              :PROC

@@ -12,6 +12,7 @@
 ;   ConfigRemovePath(path)       — rcx=WCHAR*
 ;   ConfigSaveTrusted(name)      — rcx=WCHAR*
 ;   ConfigRemoveTrusted(name)    — rcx=WCHAR*
+;   ConfigDeleteAll()            — delete known HKCU\Software\VG config keys
 ; ==============================================================================
 
 option casemap:none
@@ -21,6 +22,7 @@ EXTRN RegCreateKeyExW   :PROC
 EXTRN RegOpenKeyExW     :PROC
 EXTRN RegSetValueExW    :PROC
 EXTRN RegDeleteValueW   :PROC
+EXTRN RegDeleteKeyW     :PROC
 EXTRN RegEnumValueW     :PROC
 EXTRN RegCloseKey       :PROC
 EXTRN EnsureDriverReady :PROC
@@ -42,6 +44,7 @@ EXTRN wcs_ascii_lower_inplace :PROC
 .const
     str_key_paths   dw 'S','o','f','t','w','a','r','e','\','V','G','\','P','a','t','h','s',0
     str_key_trusted dw 'S','o','f','t','w','a','r','e','\','V','G','\','T','r','u','s','t','e','d',0
+    str_key_root    dw 'S','o','f','t','w','a','r','e','\','V','G',0
 
 .code
 
@@ -271,6 +274,32 @@ ConfigRemoveTrusted proc
     pop     rbx
     ret
 ConfigRemoveTrusted endp
+
+; ==============================================================================
+; ConfigDeleteAll  →  void
+; Deletes known HKCU\Software\VG config keys.  Used only by full product
+; uninstall; normal item/trusted changes stay value-scoped above.
+; Stack: entry rsp%16=8; sub 28h → 0 ✓
+; ==============================================================================
+PUBLIC ConfigDeleteAll
+ConfigDeleteAll proc
+    sub     rsp, 28h
+
+    lea     rdx, str_key_paths
+    mov     rcx, HKEY_CURRENT_USER
+    call    RegDeleteKeyW
+
+    lea     rdx, str_key_trusted
+    mov     rcx, HKEY_CURRENT_USER
+    call    RegDeleteKeyW
+
+    lea     rdx, str_key_root
+    mov     rcx, HKEY_CURRENT_USER
+    call    RegDeleteKeyW
+
+    add     rsp, 28h
+    ret
+ConfigDeleteAll endp
 
 ; ==============================================================================
 ; ConfigLoad  →  void
