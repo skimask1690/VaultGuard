@@ -330,8 +330,8 @@ CreateMainWindow proc
     mov     qword ptr [rsp+50h], rax            ; hInstance
     mov     qword ptr [rsp+48h], 0              ; hMenu = NULL
     mov     qword ptr [rsp+40h], 0              ; hWndParent = NULL (top-level)
-    mov     dword ptr [rsp+38h], 472            ; nHeight (increased for author label)
-    mov     dword ptr [rsp+30h], 680            ; nWidth
+    mov     dword ptr [rsp+38h], 550            ; nHeight
+    mov     dword ptr [rsp+30h], 700            ; nWidth
     mov     dword ptr [rsp+28h], 080000000h     ; Y = CW_USEDEFAULT
     mov     dword ptr [rsp+20h], 080000000h     ; X = CW_USEDEFAULT
     mov     r9d, (STY_MAINWIN + WS_CLIPCHILDREN)

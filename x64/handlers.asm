@@ -42,6 +42,7 @@ EXTRN ConfigLoad                :PROC
 EXTRN ConfigSavePath            :PROC
 EXTRN ConfigRemovePath          :PROC
 EXTRN ConfigSaveTrusted         :PROC
+EXTRN ConfigSaveTrustedEx       :PROC
 EXTRN ConfigRemoveTrusted       :PROC
 
 EXTRN g_statusResult            :BYTE   ; defined in driver_scm.asm
@@ -54,6 +55,11 @@ EXTRN _LvSetRowParam            :PROC
 EXTRN _LvGetRowParam            :PROC
 EXTRN wcscmp_ci                 :PROC
 EXTRN wcs_ascii_lower_inplace   :PROC
+EXTRN wcslen_p                  :PROC
+EXTRN wcscat_p                  :PROC
+EXTRN ShowProcPicker            :PROC
+EXTRN GuiExportConfig           :PROC
+EXTRN GuiImportConfig           :PROC
 
 ; ── Cross-module data (defined in layout.asm) ─────────────────────────────────
 EXTRN g_hwndEditTrusted         :QWORD
@@ -91,6 +97,7 @@ str_add_path_title  dw 'S','e','l','e','c','t',' ','F','o','l','d','e','r',0
 str_err_nosel       dw 'N','o',' ','i','t','e','m',' ','s','e','l','e','c','t','e','d','.',0
 str_err_empty_proc  dw 'E','n','t','e','r',' ','a',' ','p','r','o','c','e','s','s',' ','n','a','m','e',' ','f','i','r','s','t','.',0
 str_err_title       dw 'E','r','r','o','r',0
+str_dot_exe         dw '.','e','x','e',0
 str_blank           dw 0
 
 
@@ -499,9 +506,11 @@ _ShowFlagsDialog endp
 
 ; ==============================================================================
 ; _OnNotify  rcx=hwnd  rdx=NMHDR*  →  void
-; Handles WM_NOTIFY from g_hwndLvPaths: NM_CLICK → inline checkbox toggle.
+; WM_NOTIFY dispatch:
+;   NM_CLICK on LvPaths cols 1-4       → inline protection-flag toggle
+;   LVN_ITEMCHANGED on either LV       → row-level enable/disable via checkbox
 ; Stack: push rbx,rsi,rdi,r12,r13,r14 (6×8=48)→rsp%16=8; sub 48h (+72)→0 ✓
-; [rsp+40h] = temp slot for original_flags
+; [rsp+40h] = original_flags temp slot
 ; ==============================================================================
 _OnNotify proc
     push    rbx
@@ -512,100 +521,250 @@ _OnNotify proc
     push    r14
     sub     rsp, 48h
 
-    mov     rbx, rcx            ; hwnd (unused after entry)
+    mov     rbx, rcx            ; hwnd
     mov     rsi, rdx            ; NMHDR*
 
-    ; Only handle clicks on g_hwndLvPaths
     mov     rax, qword ptr [rsi + 0]    ; NMHDR.hwndFrom
-    cmp     rax, g_hwndLvPaths          ; only handle clicks on protected paths list
-    jne     @on_ret
+    cmp     rax, g_hwndLvPaths
+    je      @on_from_paths
+    cmp     rax, g_hwndLvTrusted
+    je      @on_from_trusted
+    jmp     @on_ret
 
-    ; Only NM_CLICK (not NM_DBLCLK etc.)
-    mov     eax, dword ptr [rsi + 16]   ; NMHDR.nCode (offset 16 in x64 NMHDR)
-    cmp     eax, NM_CLICK
-    jne     @on_ret
+; ── Dispatching by source LV ─────────────────────────────────────────────────
+@on_from_paths:
+    mov     r13d, dword ptr [rsi + 16]  ; NMHDR.nCode
+    cmp     r13d, NM_CLICK
+    je      @on_click_paths
+    cmp     r13d, LVN_ITEMCHANGED
+    je      @on_itemchanged_lv
+    jmp     @on_ret
 
+@on_from_trusted:
+    mov     r13d, dword ptr [rsi + 16]
+    cmp     r13d, LVN_ITEMCHANGED
+    je      @on_itemchanged_lv
+    jmp     @on_ret
+
+; ── NM_CLICK on paths LV: column flag toggle ─────────────────────────────────
+@on_click_paths:
     ; iItem (row): must be >= 0 (not a header click)
     mov     r12d, dword ptr [rsi + NMIA_iItem]
     cmp     r12d, 0
     jl      @on_ret
 
     ; iSubItem (col): 1=Hidden 2=Locked 3=ReadOnly 4=NoExec
-    mov     r13d, dword ptr [rsi + NMIA_iSubItem]
-    cmp     r13d, 1
-    jl      @on_ret                     ; col 0 = path text, not a flag
-    cmp     r13d, 4
+    mov     r14d, dword ptr [rsi + NMIA_iSubItem]
+    cmp     r14d, 1
+    jl      @on_ret                     ; col 0 = path text
+    cmp     r14d, 4
     jg      @on_ret
 
     ; map column to flag bit: col1->bit0 col2->bit1 col3->bit2 col4->bit3
-    mov     ecx, r13d
-    dec     ecx                         ; ecx = iSubItem - 1
-    mov     r14d, 1
-    shl     r14d, cl                    ; r14d = VG_FLAG_* to toggle
+    mov     ecx, r14d
+    dec     ecx
+    mov     edi, 1
+    shl     edi, cl                     ; edi = VG_FLAG_* to toggle
 
-    ; Get current flags (lParam) for this row -- stored by RefreshLists
     mov     rdx, r12
     mov     rcx, g_hwndLvPaths
     call    _LvGetRowParam
-    mov     edi, eax                    ; edi = original_flags (DWORD)
+    mov     r14d, eax                   ; r14d = original full flags
 
-    ; lParam == 0 means this is the "pending" row (not yet applied to driver)
-    mov     dword ptr [rsp + 40h], edi
+    ; Don't toggle the column bit if entry is disabled
+    test    r14d, VG_FLAG_DISABLED
+    jnz     @on_ret
 
-    ; Toggle the clicked flag bit
-    xor     edi, r14d                   ; edi = new_flags after toggle
+    xor     r14d, edi                   ; toggle the clicked flag bit (new_flags)
 
-    ; Get path text (col 0) into lv_text_buf
     lea     r9, lv_text_buf
     xor     r8d, r8d
     mov     rdx, r12
     mov     rcx, g_hwndLvPaths
     call    _LvGetItemText
 
-    ; Clear pending marker only when this row's path matches g_pendingPath
-    ; (lParam==0 is not a reliable sentinel: registry entries with flags=0 also have lParam=0)
+    ; Clear pending marker if this row is the pending path
     cmp     word ptr [g_pendingPath], 0
-    je      @on_not_pending
+    je      @on_cp_not_pending
     lea     rdx, lv_text_buf
     lea     rcx, g_pendingPath
     call    wcscmp_ci
     test    eax, eax
-    jnz     @on_not_pending
+    jnz     @on_cp_not_pending
     mov     word ptr [g_pendingPath], 0
-@on_not_pending:
+@on_cp_not_pending:
 
     call    EnsureDriverReady
     test    eax, eax
     jz      @on_ret
 
-    test    edi, edi
-    jz      @on_zero_flags
+    mov     eax, r14d
+    and     eax, 0Fh                    ; protection bits only
+    jz      @on_cp_zero_flags
 
-    ; flags > 0: add/update path protection
     lea     rdx, lv_text_buf
-    mov     ecx, edi
+    mov     ecx, r14d
     call    IoctlAddPath
     mov     ecx, 1
     call    IoctlSetActive
     call    CloseDevice
-    mov     edx, edi
+    mov     edx, r14d
     lea     rcx, lv_text_buf
     call    ConfigSavePath
-    jmp     @on_refresh
+    jmp     @on_cp_refresh
 
-@on_zero_flags:
-    ; All flags cleared: remove protection in driver; keep registry entry with flags=0
+@on_cp_zero_flags:
     lea     rdx, lv_text_buf
-    xor     ecx, ecx                    ; flags = 0 = unprotect
+    xor     ecx, ecx
     call    IoctlAddPath
     call    CloseDevice
-    xor     edx, edx                    ; flags = 0
+    xor     edx, edx
     lea     rcx, lv_text_buf
-    call    ConfigSavePath              ; persist inactive entry so row survives restart
+    call    ConfigSavePath
 
-@on_refresh:
+@on_cp_refresh:
     call    RefreshLists
+    jmp     @on_ret
 
+; ── LVN_ITEMCHANGED: row-level checkbox enable/disable ───────────────────────
+@on_itemchanged_lv:
+    ; Only react to state changes, and only when the old state already had a
+    ; checkbox image (uOldState & LVIS_STATEIMAGEMASK != 0). This filters out
+    ; notifications generated by RefreshLists during initial population.
+    mov     eax, dword ptr [rsi + NMLV_uChanged]
+    test    eax, LVIF_STATE
+    jz      @on_ret
+    mov     eax, dword ptr [rsi + NMLV_uOldState]
+    and     eax, LVIS_STATEIMAGEMASK
+    jz      @on_ret                         ; initial insertion — ignore
+
+    mov     r12d, dword ptr [rsi + NMIA_iItem]
+    mov     eax, dword ptr [rsi + NMLV_uNewState]
+    and     eax, LVIS_STATEIMAGEMASK
+    ; eax = LVCHECKED(2000h) = enable, LVUNCHECKED(1000h) = disable
+
+    ; Which LV?
+    mov     rdx, qword ptr [rsi + 0]    ; hwndFrom
+    cmp     rdx, g_hwndLvPaths
+    je      @on_ic_paths
+
+; ── Trusted LV: enable/disable a trusted entry ───────────────────────────────
+    ; Get process name
+    lea     r9, lv_text_buf
+    xor     r8d, r8d
+    mov     rdx, r12
+    mov     rcx, g_hwndLvTrusted
+    call    _LvGetItemText
+
+    cmp     eax, LVCHECKED
+    je      @on_ic_trust_enable
+
+    ; Disable: save data=0 to registry, remove from driver
+    xor     edx, edx
+    lea     rcx, lv_text_buf
+    call    ConfigSaveTrustedEx
+
+    lea     rcx, lv_text_buf
+    call    wcs_ascii_lower_inplace
+
+    call    OpenDevice
+    test    eax, eax
+    jz      @on_ic_trust_done
+    lea     rcx, lv_text_buf
+    call    IoctlRemoveTrusted
+    call    CloseDevice
+    call    ConfigLoad          ; reload all remaining enabled entries to driver
+    jmp     @on_ic_trust_done
+
+@on_ic_trust_enable:
+    ; Enable: save data=1 to registry, add to driver
+    mov     edx, 1
+    lea     rcx, lv_text_buf
+    call    ConfigSaveTrustedEx
+
+    lea     rcx, lv_text_buf
+    call    wcs_ascii_lower_inplace
+
+    call    EnsureDriverReady
+    test    eax, eax
+    jz      @on_ic_trust_done
+    lea     rcx, lv_text_buf
+    call    IoctlAddTrusted
+    call    CloseDevice
+
+@on_ic_trust_done:
+    jmp     @on_ret
+
+; ── Paths LV: enable/disable a protected path ────────────────────────────────
+@on_ic_paths:
+    ; Save eax (LVCHECKED or LVUNCHECKED) — use rdi
+    mov     edi, eax
+
+    ; Get current flags from lParam
+    mov     rdx, r12
+    mov     rcx, g_hwndLvPaths
+    call    _LvGetRowParam
+    mov     r14d, eax               ; r14d = current flags
+
+    ; Get path text
+    lea     r9, lv_text_buf
+    xor     r8d, r8d
+    mov     rdx, r12
+    mov     rcx, g_hwndLvPaths
+    call    _LvGetItemText
+
+    cmp     edi, LVCHECKED
+    je      @on_ic_path_enable
+
+    ; Disable: set VG_FLAG_DISABLED bit, remove from driver
+    or      r14d, VG_FLAG_DISABLED
+
+    mov     r8, r14                 ; updated flags
+    mov     rdx, r12
+    mov     rcx, g_hwndLvPaths
+    call    _LvSetRowParam
+
+    mov     edx, r14d
+    lea     rcx, lv_text_buf
+    call    ConfigSavePath
+
+    call    EnsureDriverReady
+    test    eax, eax
+    jz      @on_ic_path_done
+    lea     rdx, lv_text_buf
+    xor     ecx, ecx                ; flags=0 = unprotect
+    call    IoctlAddPath
+    call    CloseDevice
+    jmp     @on_ic_path_done
+
+@on_ic_path_enable:
+    ; Enable: clear VG_FLAG_DISABLED bit, add to driver if prot flags non-zero
+    and     r14d, 0FFFFFF7Fh        ; clear bit 7
+
+    mov     r8, r14
+    mov     rdx, r12
+    mov     rcx, g_hwndLvPaths
+    call    _LvSetRowParam
+
+    mov     edx, r14d
+    lea     rcx, lv_text_buf
+    call    ConfigSavePath
+
+    mov     eax, r14d
+    and     eax, 0Fh
+    jz      @on_ic_path_done        ; no protection flags → don't send to driver
+
+    call    EnsureDriverReady
+    test    eax, eax
+    jz      @on_ic_path_done
+    lea     rdx, lv_text_buf
+    mov     ecx, r14d
+    call    IoctlAddPath
+    mov     ecx, 1
+    call    IoctlSetActive
+    call    CloseDevice
+
+@on_ic_path_done:
 @on_ret:
     add     rsp, 48h
     pop     r14
@@ -691,20 +850,11 @@ _OnCommand proc
     mov     rcx, r12
     call    CoTaskMemFree
 
-    ; Stage path as "pending": shown with empty checkboxes until user ticks one
-    lea     r10, path_pidl_buf          ; source: path resolved from PIDL
-    lea     r11, g_pendingPath          ; destination: global pending path
-    xor     ecx, ecx                    ; WCHAR index
-@oc_copy_pending:
-    movzx   eax, word ptr [r10 + rcx * 2]
-    mov     word ptr [r11 + rcx * 2], ax
-    test    ax, ax
-    jz      @oc_copy_done               ; null terminator copied
-    inc     ecx
-    cmp     ecx, MAX_PATH
-    jl      @oc_copy_pending
-    mov     word ptr [r11 + rcx * 2], 0 ; force-null at MAX_PATH
-@oc_copy_done:
+    ; Persist to registry immediately so multiple adds don't overwrite each other
+    xor     edx, edx
+    lea     rcx, path_pidl_buf
+    call    ConfigSavePath
+
     call    RefreshLists
 
 @oc_add_path_done:
@@ -800,7 +950,65 @@ _OnCommand proc
     jz      @oc_add_trusted_empty
 
     lea     rcx, trusted_edit_buf
-    call    wcs_ascii_lower_inplace     ; normalize: driver compares lowercase names
+    call    wcs_ascii_lower_inplace
+
+    ; Strip path prefix: keep only filename after last \ or /
+    lea     rsi, trusted_edit_buf
+    mov     rdi, rsi                    ; tracks start of filename (default = full string)
+@oc_strip_scan:
+    movzx   eax, word ptr [rsi]
+    test    ax, ax
+    jz      @oc_strip_apply
+    cmp     ax, '\'
+    je      @oc_strip_sep
+    cmp     ax, '/'
+    je      @oc_strip_sep
+    add     rsi, 2
+    jmp     @oc_strip_scan
+@oc_strip_sep:
+    add     rsi, 2
+    mov     rdi, rsi                    ; char after separator = new filename start
+    jmp     @oc_strip_scan
+@oc_strip_apply:
+    lea     rax, trusted_edit_buf
+    cmp     rdi, rax
+    je      @oc_strip_done              ; no separator found — nothing to strip
+    mov     rsi, rdi                    ; src = filename start
+    mov     rdi, rax                    ; dst = buffer start
+@oc_strip_inner:
+    mov     ax, word ptr [rsi]
+    mov     word ptr [rdi], ax
+    add     rsi, 2
+    add     rdi, 2
+    test    ax, ax
+    jnz     @oc_strip_inner
+@oc_strip_done:
+
+    ; Re-check not empty after strip (e.g. input was just "C:\")
+    lea     rcx, trusted_edit_buf
+    call    wcslen_p
+    test    eax, eax
+    jz      @oc_add_trusted_empty
+
+    ; Append .exe if not already ending with it (already lowercased)
+    cmp     eax, 4
+    jb      @oc_append_exe
+    lea     rsi, trusted_edit_buf
+    sub     eax, 4
+    lea     rsi, [rsi + rax*2]          ; point to char at index (len-4)
+    cmp     word ptr [rsi],   '.'
+    jne     @oc_append_exe
+    cmp     word ptr [rsi+2], 'e'
+    jne     @oc_append_exe
+    cmp     word ptr [rsi+4], 'x'
+    jne     @oc_append_exe
+    cmp     word ptr [rsi+6], 'e'
+    je      @oc_exe_ok
+@oc_append_exe:
+    lea     rdx, str_dot_exe
+    lea     rcx, trusted_edit_buf
+    call    wcscat_p
+@oc_exe_ok:
 
     call    EnsureDriverReady
     test    eax, eax
@@ -828,16 +1036,62 @@ _OnCommand proc
     call    MessageBoxW
     jmp     @oc_done
 
-    ; ── Remove Trusted ───────────────────────────────────────────────────────
+    ; ── Add running process picker ───────────────────────────────────────────
 @oc_not_add_trusted:
+    cmp     esi, IDC_BTN_ADD_RUNNING
+    jne     @oc_not_add_running
+
+    mov     rcx, rbx
+    call    ShowProcPicker
+    test    eax, eax
+    jz      @oc_done                ; cancelled / nothing added
+
+    call    RefreshLists
+    jmp     @oc_done
+
+    ; ── Export settings ──────────────────────────────────────────────────────
+@oc_not_add_running:
+    cmp     esi, IDC_BTN_EXPORT
+    jne     @oc_not_export
+    mov     rcx, rbx
+    call    GuiExportConfig
+    jmp     @oc_done
+
+    ; ── Import settings ──────────────────────────────────────────────────────
+@oc_not_export:
+    cmp     esi, IDC_BTN_IMPORT
+    jne     @oc_not_import
+    mov     rcx, rbx
+    call    GuiImportConfig
+    call    ConfigLoad
+    call    RefreshLists
+    jmp     @oc_done
+
+    ; ── Remove Trusted (multi-select) ────────────────────────────────────────
+@oc_not_import:
     cmp     esi, IDC_BTN_REM_TRUSTED
     jne     @oc_done
 
+    ; Bail if nothing selected
+    mov     r9d, LVNI_SELECTED
+    mov     r8d, -1
+    mov     edx, LVM_GETNEXTITEM
     mov     rcx, g_hwndLvTrusted
-    call    _LvGetSelIdx
+    call    SendMessageW
     cmp     rax, -1
-    je      @oc_done
+    je      @oc_rem_trust_nosel
 
+    ; Loop through every selected row; remove each from registry.
+    ; LV items stay visible until RefreshLists below.
+    mov     r12, -1                     ; iItem sentinel
+@oc_rem_trust_loop:
+    mov     r9d, LVNI_SELECTED
+    mov     r8, r12
+    mov     edx, LVM_GETNEXTITEM
+    mov     rcx, g_hwndLvTrusted
+    call    SendMessageW
+    cmp     rax, -1
+    je      @oc_rem_trust_done
     mov     r12, rax
 
     lea     r9, lv_text_buf
@@ -846,20 +1100,29 @@ _OnCommand proc
     mov     rcx, g_hwndLvTrusted
     call    _LvGetItemText
 
-    ; Registry key uses original casing; driver requires lowercase -- do both.
     lea     rcx, lv_text_buf
-    call    ConfigRemoveTrusted         ; delete by original name from registry
-    lea     rcx, lv_text_buf
-    call    wcs_ascii_lower_inplace     ; normalize for driver
+    call    ConfigRemoveTrusted
+    jmp     @oc_rem_trust_loop
 
+@oc_rem_trust_done:
+    ; IoctlRemoveTrusted sends zero-size IOCTL → clears entire driver list
+    ; ConfigLoad then reloads all remaining entries from registry
     call    OpenDevice
     test    eax, eax
-    jz      @oc_done
-    lea     rcx, lv_text_buf
-    call    IoctlRemoveTrusted          ; zero-size send clears driver trusted list
+    jz      @oc_rem_trust_reload
+    call    IoctlRemoveTrusted
     call    CloseDevice
-    call    ConfigLoad                  ; reload remaining trusted entries to driver
-    call    RefreshLists                ; re-populate ListView from registry
+@oc_rem_trust_reload:
+    call    ConfigLoad
+    call    RefreshLists
+    jmp     @oc_done
+
+@oc_rem_trust_nosel:
+    mov     r9d, MB_OK + MB_ICONINFORMATION
+    lea     r8, str_err_title
+    lea     rdx, str_err_nosel
+    mov     rcx, rbx
+    call    MessageBoxW
 
 @oc_done:
     add     rsp, 38h

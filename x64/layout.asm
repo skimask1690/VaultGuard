@@ -20,6 +20,9 @@ EXTRN SendMessageW              :PROC
 EXTRN SetTimer                  :PROC
 EXTRN DragAcceptFiles           :PROC
 EXTRN ChangeWindowMessageFilterEx :PROC
+EXTRN ShowProcPicker            :PROC   ; procpicker.asm
+EXTRN GuiExportConfig           :PROC   ; impexp.asm
+EXTRN GuiImportConfig           :PROC   ; impexp.asm
 
 ; ── Sibling modules ───────────────────────────────────────────────────────────
 EXTRN _ReadDarkMode             :PROC   ; theme.asm
@@ -45,10 +48,13 @@ str_staticcls   dw 'S','T','A','T','I','C',0
 str_listviewcls dw 'S','y','s','L','i','s','t','V','i','e','w','3','2',0
 str_editcls     dw 'E','D','I','T',0
 
-str_btn_add_path    dw 'A','d','d',' ','p','a','t','h','.','.','.',0
-str_btn_restore     dw 'R','e','m','o','v','e',' ','s','e','l','e','c','t','e','d',0
-str_btn_add_proc    dw 'A','d','d',0
-str_btn_remove_proc dw 'R','e','m','o','v','e',0
+str_btn_add_path      dw 'A','d','d',' ','p','a','t','h','.','.','.',0
+str_btn_restore       dw 'R','e','m','o','v','e',' ','s','e','l','e','c','t','e','d',0
+str_btn_add_proc      dw 'A','d','d',0
+str_btn_remove_proc   dw 'R','e','m','o','v','e',0
+str_btn_add_running   dw 'A','d','d',' ','r','u','n','n','i','n','g',0
+str_btn_export        dw 'E','x','p','o','r','t',0
+str_btn_import        dw 'I','m','p','o','r','t',0
 
 str_hdr_paths       dw 'P','r','o','t','e','c','t','e','d',' ','f','i','l','e','s','/','f','o','l','d','e','r','s',0
 str_hdr_trusted     dw 'A','l','l','o','w','e','d',' ','a','p','p','s',' ','(','t','r','u','s','t','e','d',')',0
@@ -257,9 +263,9 @@ _OnCreate proc
     call    CreateWindowExW
     mov     g_hwndLvPaths, rax
 
-    ; Full-row select + grid lines + double-buffer (prevents flicker)
-    mov     r9d, (LVS_EX_FULLROWSELECT + LVS_EX_GRIDLINES + LVS_EX_DOUBLEBUFFER)
-    mov     r8d, (LVS_EX_FULLROWSELECT + LVS_EX_GRIDLINES + LVS_EX_DOUBLEBUFFER)
+    ; Full-row select + grid lines + double-buffer + row-level checkboxes
+    mov     r9d, (LVS_EX_FULLROWSELECT + LVS_EX_GRIDLINES + LVS_EX_DOUBLEBUFFER + LVS_EX_CHECKBOXES)
+    mov     r8d, (LVS_EX_FULLROWSELECT + LVS_EX_GRIDLINES + LVS_EX_DOUBLEBUFFER + LVS_EX_CHECKBOXES)
     mov     edx, LVM_SETEXTENDEDLISTVIEWSTYLE
     mov     rcx, g_hwndLvPaths
     call    SendMessageW
@@ -314,14 +320,14 @@ _OnCreate proc
     mov     rdx, g_hFontSmall
     call    _SendFont
 
-    ; ── Trusted process edit: x=182 y=276 w=318 h=26 ────────────────────────
+    ; ── Trusted process edit: x=182 y=276 w=178 h=26 (shorter to fit new buttons) ──
     mov     r14, g_hInstance
     mov     qword ptr [rsp+58h], 0
     mov     qword ptr [rsp+50h], r14
     mov     qword ptr [rsp+48h], IDC_EDIT_TRUSTED
     mov     qword ptr [rsp+40h], rbx
     mov     dword ptr [rsp+38h], 26
-    mov     dword ptr [rsp+30h], 318
+    mov     dword ptr [rsp+30h], 178
     mov     dword ptr [rsp+28h], 276
     mov     dword ptr [rsp+20h], 182
     mov     r9d, (WS_CHILD_VISIBLE + WS_TABSTOP + ES_AUTOHSCROLL)
@@ -334,16 +340,16 @@ _OnCreate proc
     mov     rdx, g_hFontSmall
     call    _SendFont
 
-    ; ── Trusted add button: x=504 y=276 w=66 h=26 ───────────────────────────
+    ; ── Trusted add button: x=364 y=276 w=70 h=26 ───────────────────────────
     mov     r14, g_hInstance
     mov     qword ptr [rsp+58h], 0
     mov     qword ptr [rsp+50h], r14
     mov     qword ptr [rsp+48h], IDC_BTN_ADD_TRUSTED
     mov     qword ptr [rsp+40h], rbx
     mov     dword ptr [rsp+38h], 26
-    mov     dword ptr [rsp+30h], 66
+    mov     dword ptr [rsp+30h], 70
     mov     dword ptr [rsp+28h], 276
-    mov     dword ptr [rsp+20h], 504
+    mov     dword ptr [rsp+20h], 364
     mov     r9d, STY_BUTTON
     lea     r8, str_btn_add_proc
     lea     rdx, str_buttoncls
@@ -353,16 +359,35 @@ _OnCreate proc
     mov     rdx, g_hFontSmall
     call    _SendFont
 
-    ; ── Trusted remove button: x=574 y=276 w=68 h=26 ────────────────────────
+    ; ── Add running process button: x=440 y=276 w=110 h=26 ───────────────────
+    mov     r14, g_hInstance
+    mov     qword ptr [rsp+58h], 0
+    mov     qword ptr [rsp+50h], r14
+    mov     qword ptr [rsp+48h], IDC_BTN_ADD_RUNNING
+    mov     qword ptr [rsp+40h], rbx
+    mov     dword ptr [rsp+38h], 26
+    mov     dword ptr [rsp+30h], 110
+    mov     dword ptr [rsp+28h], 276
+    mov     dword ptr [rsp+20h], 440
+    mov     r9d, STY_BUTTON
+    lea     r8, str_btn_add_running
+    lea     rdx, str_buttoncls
+    xor     ecx, ecx
+    call    CreateWindowExW
+    mov     rcx, rax
+    mov     rdx, g_hFontSmall
+    call    _SendFont
+
+    ; ── Trusted remove button: x=556 y=276 w=87 h=26 ───────────────────────
     mov     r14, g_hInstance
     mov     qword ptr [rsp+58h], 0
     mov     qword ptr [rsp+50h], r14
     mov     qword ptr [rsp+48h], IDC_BTN_REM_TRUSTED
     mov     qword ptr [rsp+40h], rbx
     mov     dword ptr [rsp+38h], 26
-    mov     dword ptr [rsp+30h], 68
+    mov     dword ptr [rsp+30h], 87
     mov     dword ptr [rsp+28h], 276
-    mov     dword ptr [rsp+20h], 574
+    mov     dword ptr [rsp+20h], 556
     mov     r9d, STY_BUTTON
     lea     r8, str_btn_remove_proc
     lea     rdx, str_buttoncls
@@ -372,26 +397,26 @@ _OnCreate proc
     mov     rdx, g_hFontSmall
     call    _SendFont
 
-    ; ── Trusted ListView: x=20 y=308 w=624 h=80 (3 items) ───────────────────
+    ; ── Trusted ListView: x=20 y=308 w=624 h=140 (≈6 rows) ─────────────────
     mov     r14, g_hInstance
     mov     qword ptr [rsp+58h], 0
     mov     qword ptr [rsp+50h], r14
     mov     qword ptr [rsp+48h], IDC_LV_TRUSTED
     mov     qword ptr [rsp+40h], rbx
-    mov     dword ptr [rsp+38h], 80
+    mov     dword ptr [rsp+38h], 140
     mov     dword ptr [rsp+30h], 624
     mov     dword ptr [rsp+28h], 308
     mov     dword ptr [rsp+20h], 20
-    mov     r9d, (WS_CHILD_VISIBLE + LVS_REPORT + LVS_SHOWSELALWAYS + LVS_SINGLESEL)
+    mov     r9d, (WS_CHILD_VISIBLE + LVS_REPORT + LVS_SHOWSELALWAYS)
     xor     r8d, r8d
     lea     rdx, str_listviewcls
     mov     ecx, WS_EX_CLIENTEDGE
     call    CreateWindowExW
     mov     g_hwndLvTrusted, rax
 
-    ; No grid lines for trusted list (single-column list)
-    mov     r9d, (LVS_EX_FULLROWSELECT + LVS_EX_DOUBLEBUFFER)
-    mov     r8d, (LVS_EX_FULLROWSELECT + LVS_EX_DOUBLEBUFFER)
+    ; No grid lines for trusted list; add row-level checkboxes
+    mov     r9d, (LVS_EX_FULLROWSELECT + LVS_EX_DOUBLEBUFFER + LVS_EX_CHECKBOXES)
+    mov     r8d, (LVS_EX_FULLROWSELECT + LVS_EX_DOUBLEBUFFER + LVS_EX_CHECKBOXES)
     mov     edx, LVM_SETEXTENDEDLISTVIEWSTYLE
     mov     rcx, g_hwndLvTrusted
     call    SendMessageW
@@ -403,9 +428,45 @@ _OnCreate proc
     mov     rcx, g_hwndLvTrusted
     call    _LvAddColumn
 
-    ; ── Author / copyright static: x=20 y=396 w=624 h=18 ───────────────────
-    ; Centered single-line label below the trusted list; uses STY_STATIC_CENTER
-    ; (WS_CHILD | WS_VISIBLE | SS_CENTER).
+    ; ── Export button: x=20 y=454 w=90 h=22 ────────────────────────────────
+    mov     r14, g_hInstance
+    mov     qword ptr [rsp+58h], 0
+    mov     qword ptr [rsp+50h], r14
+    mov     qword ptr [rsp+48h], IDC_BTN_EXPORT
+    mov     qword ptr [rsp+40h], rbx
+    mov     dword ptr [rsp+38h], 22
+    mov     dword ptr [rsp+30h], 90
+    mov     dword ptr [rsp+28h], 454
+    mov     dword ptr [rsp+20h], 20
+    mov     r9d, STY_BUTTON
+    lea     r8, str_btn_export
+    lea     rdx, str_buttoncls
+    xor     ecx, ecx
+    call    CreateWindowExW
+    mov     rcx, rax
+    mov     rdx, g_hFontSmall
+    call    _SendFont
+
+    ; ── Import button: x=115 y=454 w=90 h=22 ───────────────────────────────
+    mov     r14, g_hInstance
+    mov     qword ptr [rsp+58h], 0
+    mov     qword ptr [rsp+50h], r14
+    mov     qword ptr [rsp+48h], IDC_BTN_IMPORT
+    mov     qword ptr [rsp+40h], rbx
+    mov     dword ptr [rsp+38h], 22
+    mov     dword ptr [rsp+30h], 90
+    mov     dword ptr [rsp+28h], 454
+    mov     dword ptr [rsp+20h], 115
+    mov     r9d, STY_BUTTON
+    lea     r8, str_btn_import
+    lea     rdx, str_buttoncls
+    xor     ecx, ecx
+    call    CreateWindowExW
+    mov     rcx, rax
+    mov     rdx, g_hFontSmall
+    call    _SendFont
+
+    ; ── Author / copyright static: x=20 y=482 w=624 h=18 ───────────────────
     mov     r14, g_hInstance
     mov     qword ptr [rsp+58h], 0
     mov     qword ptr [rsp+50h], r14
@@ -413,7 +474,7 @@ _OnCreate proc
     mov     qword ptr [rsp+40h], rbx
     mov     dword ptr [rsp+38h], 18
     mov     dword ptr [rsp+30h], 624
-    mov     dword ptr [rsp+28h], 396
+    mov     dword ptr [rsp+28h], 482
     mov     dword ptr [rsp+20h], 20
     mov     r9d, STY_STATIC_CENTER
     lea     r8, str_author

@@ -353,9 +353,11 @@ ConfigLoad proc
     test    eax, eax
     jnz     @cl_paths_next                  ; other error — skip entry
 
-    mov     ecx, cfg_flags                  ; flags (value data from registry)
+    mov     ecx, cfg_flags                  ; full flags including VG_FLAG_DISABLED
+    test    ecx, VG_FLAG_DISABLED
+    jnz     @cl_paths_next                  ; disabled → don't push to driver
     and     ecx, 0Fh
-    jz      @cl_paths_next                  ; zero = remembered but inactive
+    jz      @cl_paths_next                  ; no active protection bits → skip
     lea     rdx, cfg_name_buf               ; path (value name from registry)
     call    IoctlAddPath
 
@@ -405,6 +407,11 @@ ConfigLoad proc
     test    eax, eax
     jnz     @cl_trusted_next
 
+    ; data = 0 means disabled → don't push to driver
+    mov     ecx, cfg_flags
+    test    ecx, ecx
+    jz      @cl_trusted_next
+
     lea     rcx, cfg_name_buf
     call    wcs_ascii_lower_inplace
     lea     rcx, cfg_name_buf
@@ -426,5 +433,49 @@ ConfigLoad proc
     pop     rbx
     ret
 ConfigLoad endp
+
+; ==============================================================================
+; ConfigSaveTrustedEx  rcx=name(WCHAR*)  edx=value(DWORD)  →  void
+; HKCU\Software\VG\Trusted\<name> = value (REG_DWORD). value=1 means enabled, 0 disabled.
+; Stack: entry rsp%16=8; push rbx,rsi,rdi (+24)→0; sub 50h (+80)→0 ✓
+; ==============================================================================
+PUBLIC ConfigSaveTrustedEx
+ConfigSaveTrustedEx proc
+    push    rbx
+    push    rsi
+    push    rdi
+    sub     rsp, 50h
+
+    mov     rbx, rcx                ; name
+    mov     esi, edx                ; value (0 or 1)
+
+    lea     rcx, str_key_trusted
+    call    _CfgCreate
+    test    rax, rax
+    jz      @cstx_ret
+    mov     rdi, rax
+
+    lea     rax, cfg_flags
+    mov     dword ptr [rax], esi    ; store value
+
+    lea     rax, cfg_flags
+    mov     dword ptr [rsp+28h], 4
+    mov     qword ptr [rsp+20h], rax
+    mov     r9d, REG_DWORD
+    xor     r8d, r8d
+    mov     rdx, rbx
+    mov     rcx, rdi
+    call    RegSetValueExW
+
+    mov     rcx, rdi
+    call    RegCloseKey
+
+@cstx_ret:
+    add     rsp, 50h
+    pop     rdi
+    pop     rsi
+    pop     rbx
+    ret
+ConfigSaveTrustedEx endp
 
 end

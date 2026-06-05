@@ -203,7 +203,7 @@ try {
 
     # ── Step 2: Assemble ──────────────────────────────────────────────────────
 
-    $Modules = @('strutil', 'res', 'driver_scm', 'device', 'ioctl', 'config', 'cli', 'export', 'service', 'theme', 'listview', 'handlers', 'drop', 'tray', 'layout', 'window', 'main')
+    $Modules = @('strutil', 'res', 'driver_scm', 'device', 'ioctl', 'config', 'cli', 'export', 'service', 'theme', 'listview', 'handlers', 'drop', 'tray', 'layout', 'procpicker', 'impexp', 'window', 'main')
 
     if ($OK) {
         Write-Banner '[2] Assembling modules'
@@ -238,7 +238,7 @@ try {
             "/LIBPATH:$LibPath" `
             'kernel32.lib' 'user32.lib'  'advapi32.lib' 'shell32.lib' `
             'ole32.lib'    'dwmapi.lib'  'gdi32.lib'    'comctl32.lib' `
-            'uxtheme.lib'  'cabinet.lib'
+            'uxtheme.lib'  'cabinet.lib' 'comdlg32.lib'
 
         if ($LASTEXITCODE -ne 0) {
             Write-Host 'ERROR: link.exe failed' -ForegroundColor Red
@@ -250,7 +250,7 @@ try {
 
     $BlockedPatterns = 'msvcr|vcruntime|ucrtbase|rstrtmgr'
     $AllowedDlls = [System.Collections.Generic.HashSet[string]]([StringComparer]::OrdinalIgnoreCase)
-    @('CABINET.dll','ADVAPI32.dll','COMCTL32.dll','DWMAPI.dll','GDI32.dll',
+    @('CABINET.dll','ADVAPI32.dll','COMCTL32.dll','COMDLG32.dll','DWMAPI.dll','GDI32.dll',
       'KERNEL32.dll','OLE32.dll','SHELL32.dll','USER32.dll','UXTHEME.dll') |
         ForEach-Object { [void]$AllowedDlls.Add($_) }
 

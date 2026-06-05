@@ -73,6 +73,9 @@ lv_col              db LVCOLUMNW_SIZE dup(0)
     ; Trusted enum (registry)
     lv_trust_hkey    dq ?
     lv_trust_namelen dd ?
+    lv_trust_datalen dd ?
+    lv_trust_data    dd ?
+    lv_trust_type    dd ?
     lv_trust_name_buf dw 520 dup(?)
 
     ; Paths enum (registry)
@@ -99,6 +102,7 @@ PUBLIC _LvGetSelIdx
 PUBLIC _LvGetItemText
 PUBLIC _LvSetRowParam
 PUBLIC _LvGetRowParam
+PUBLIC _LvSetCheckState
 PUBLIC RefreshLists
 
 ; ==============================================================================
@@ -342,6 +346,41 @@ _LvGetRowParam proc
     pop     rbx
     ret
 _LvGetRowParam endp
+
+; ==============================================================================
+; _LvSetCheckState  rcx=hwndLv  rdx=row  r8d=checked(1=on/0=off)  →  void
+; Sets LVS_EX_CHECKBOXES checkbox state for a single row via LVM_SETITEMSTATE.
+; Stack: entry rsp%16=8; push rbx,rsi (+16)→8; sub 28h (+40)→0 ✓
+; ==============================================================================
+_LvSetCheckState proc
+    push    rbx
+    push    rsi
+    sub     rsp, 28h
+
+    mov     rbx, rcx                        ; hwndLv
+    mov     esi, edx                        ; row
+
+    test    r8d, r8d
+    mov     eax, LVCHECKED
+    jnz     @lcs_checked
+    mov     eax, LVUNCHECKED
+@lcs_checked:
+    lea     r10, lv_item
+    mov     dword ptr [r10 + LVITEMW_mask],      LVIF_STATE
+    mov     dword ptr [r10 + LVITEMW_state],     eax
+    mov     dword ptr [r10 + LVITEMW_stateMask], LVIS_STATEIMAGEMASK
+
+    lea     r9, lv_item
+    mov     r8, rsi                         ; wParam = item index
+    mov     edx, LVM_SETITEMSTATE
+    mov     rcx, rbx
+    call    SendMessageW
+
+    add     rsp, 28h
+    pop     rsi
+    pop     rbx
+    ret
+_LvSetCheckState endp
 
 ; ==============================================================================
 ; _LvAddColumn  rcx=hwndLv  rdx=colIdx  r8=width  r9=pszText  →  void
@@ -690,8 +729,7 @@ RefreshLists proc
     test    eax, eax
     jnz     @rl_paths_next
 
-    mov     edi, dword ptr [lv_path_flags]
-    and     edi, 0Fh
+    mov     edi, dword ptr [lv_path_flags]  ; full flags including VG_FLAG_DISABLED
 
     lea     r9, lv_path_name_buf
 
@@ -713,13 +751,22 @@ RefreshLists proc
     mov     rcx, g_hwndLvPaths
     call    _LvInsertItem
 
-    ; Store protection flags in LVITEM.lParam for fast checkbox toggle (no registry read)
-    mov     r8d, edi                            ; flags bitmask
+    ; Store full flags (incl. VG_FLAG_DISABLED) in LVITEM.lParam
+    mov     r8d, edi                            ; full flags bitmask
     mov     rdx, r14                            ; row index
     mov     rcx, g_hwndLvPaths
     call    _LvSetRowParam
 
-    ; Col 1: Hidden
+    ; Row checkbox: unchecked if VG_FLAG_DISABLED set, checked otherwise
+    mov     eax, edi
+    and     eax, VG_FLAG_DISABLED
+    setz    al                                  ; al=1 if NOT disabled
+    movzx   r8d, al
+    mov     rdx, r14
+    mov     rcx, g_hwndLvPaths
+    call    _LvSetCheckState
+
+    ; Col 1: Hidden (use bits 0-3 only for column display)
     test    dil, VG_FLAG_HIDDEN
     lea     r9, str_check
     jnz     @rl_h1
@@ -844,10 +891,14 @@ RefreshLists proc
 
 @rl_trust_loop:
     mov     dword ptr [lv_trust_namelen], 520
-    ; RegEnumValueW: value name = process name; data not used (presence = allow)
-    mov     qword ptr [rsp + 38h], 0            ; lpcbData = NULL
-    mov     qword ptr [rsp + 30h], 0            ; lpData = NULL
-    mov     qword ptr [rsp + 28h], 0            ; lpType = NULL
+    mov     dword ptr [lv_trust_datalen], 4
+
+    lea     rax, lv_trust_datalen
+    mov     qword ptr [rsp + 38h], rax          ; lpcbData
+    lea     rax, lv_trust_data
+    mov     qword ptr [rsp + 30h], rax          ; lpData (read enable/disable flag)
+    lea     rax, lv_trust_type
+    mov     qword ptr [rsp + 28h], rax          ; lpType
     mov     qword ptr [rsp + 20h], 0            ; lpReserved = NULL
     lea     r9, lv_trust_namelen
     lea     r8, lv_trust_name_buf               ; value name = process name
@@ -864,6 +915,15 @@ RefreshLists proc
     mov     rdx, r14
     mov     rcx, g_hwndLvTrusted
     call    _LvInsertItem
+
+    ; Row checkbox: data=1 → checked (enabled), data=0 → unchecked (disabled)
+    movzx   r8d, byte ptr [lv_trust_data]       ; r8d = data (0 or 1)
+    test    r8d, r8d
+    setnz   al
+    movzx   r8d, al
+    mov     rdx, r14
+    mov     rcx, g_hwndLvTrusted
+    call    _LvSetCheckState
 
 @rl_trust_next:
     inc     r14d

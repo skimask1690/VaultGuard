@@ -26,6 +26,7 @@ VG_FLAG_HIDDEN              EQU 01h
 VG_FLAG_LOCKED              EQU 02h
 VG_FLAG_READONLY            EQU 04h
 VG_FLAG_NOEXEC              EQU 08h
+VG_FLAG_DISABLED            EQU 80h     ; bit 7: row kept in list but inactive in driver
 
 ; VG_PATH_ENTRY offsets (packed struct: 1+2+var)
 VG_PE_FLAGS                 EQU 0           ; BYTE  Flags
@@ -234,9 +235,18 @@ LVS_EX_HEADERDRAGDROP       EQU 00000010h
 
 LVIF_TEXT                   EQU 00000001h
 LVIF_PARAM                  EQU 00000004h
+LVIF_STATE                  EQU 00000008h
 LVIS_SELECTED               EQU 0002h
 LVIS_FOCUSED                EQU 0001h
 LVNI_SELECTED               EQU 0002h
+LVIS_STATEIMAGEMASK         EQU 0F000h
+LVCHECKED                   EQU 2000h   ; INDEXTOSTATEIMAGEMASK(2)
+LVUNCHECKED                 EQU 1000h   ; INDEXTOSTATEIMAGEMASK(1)
+
+; NMLISTVIEW offsets (x64): NMHDR(24) + iItem(4) + iSubItem(4) + uNewState(4) + uOldState(4) + uChanged(4)
+NMLV_uNewState              EQU 32
+NMLV_uOldState              EQU 36
+NMLV_uChanged               EQU 40
 
 ; LVCOLUMNW mask
 LVCF_FMT                    EQU 0001h
@@ -291,6 +301,10 @@ IDC_STATIC_TRUSTED_HDR      EQU 212
 IDC_EDIT_PATH               EQU 213
 IDC_EDIT_TRUSTED            EQU 214
 IDC_STATIC_AUTHOR           EQU 215         ; author / copyright label at bottom
+IDC_BTN_ADD_RUNNING         EQU 216         ; "Add running" process picker
+IDC_BTN_EXPORT              EQU 217
+IDC_BTN_IMPORT              EQU 218
+IDC_LV_PROCPICK             EQU 219         ; ListView inside process picker dialog
 
 ; Protection flags dialog control IDs
 IDC_DLG_PATH                EQU 100
@@ -381,6 +395,40 @@ BIF_BROWSEINCLUDEFILES      EQU 4000h
 
 ; SHGetPathFromIDListW max
 MAX_PATH                    EQU 260
+
+; ------------------------------------------------------------------------------
+; TOOLHELP32 — process enumeration
+; ------------------------------------------------------------------------------
+TH32CS_SNAPPROCESS          EQU 00000002h
+PE32W_dwSize                EQU 0           ; DWORD
+PE32W_th32ProcessID         EQU 8           ; DWORD (after cntUsage at 4)
+PE32W_szExeFile             EQU 44          ; WCHAR[260] (after alignment pad + ULONG_PTR)
+PROCESSENTRY32W_SIZE        EQU 568         ; sizeof PROCESSENTRY32W (x64)
+
+; ------------------------------------------------------------------------------
+; OPENFILENAMEW — GetOpenFileNameW / GetSaveFileNameW
+; ------------------------------------------------------------------------------
+OFN_SIZE                    EQU 136
+OFN_lStructSize             EQU 0
+OFN_hwndOwner               EQU 8
+OFN_hInstance               EQU 16
+OFN_lpstrFilter             EQU 24
+OFN_lpstrCustomFilter       EQU 32
+OFN_nMaxCustFilter          EQU 40
+OFN_nFilterIndex            EQU 44
+OFN_lpstrFile               EQU 48
+OFN_nMaxFile                EQU 56
+OFN_lpstrFileTitle          EQU 64
+OFN_nMaxFileTitle           EQU 72
+OFN_lpstrInitialDir         EQU 80
+OFN_lpstrTitle              EQU 88
+OFN_Flags                   EQU 96
+OFN_lpstrDefExt             EQU 104
+OFN_PATHMUSTEXIST           EQU 00000800h
+OFN_FILEMUSTEXIST           EQU 00001000h
+OFN_OVERWRITEPROMPT         EQU 00000002h
+OFN_EXPLORER                EQU 00080000h
+OFN_HIDEREADONLY            EQU 00000004h
 
 ; ------------------------------------------------------------------------------
 ; CONSOLE / PROCESS

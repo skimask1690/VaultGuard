@@ -23,6 +23,9 @@
 - [Driver Communication](#driver-communication)
 - [Registry Layout](#registry-layout)
 - [Module Analysis](#module-analysis)
+  - [handlers.asm — Commands, Notify & Status](#handlersasm--commands-notify--status)
+  - [procpicker.asm — Running Process Picker](#procpickerasm--running-process-picker)
+  - [impexp.asm — GUI Config Import/Export](#impexpasm--gui-config-importexport)
 - [Building from Source](#building-from-source)
 - [Regression Tests](#regression-tests)
 - [Known Limitations](#known-limitations)
@@ -159,7 +162,7 @@ Flags combine as a bitmask: `Hidden + Locked = 0x03`, `Hidden + Locked + Read-on
 
 ## GUI Reference
 
-Launch `vg.exe` without arguments. Fixed 680 × 472 px window.
+Launch `vg.exe` without arguments. Fixed **700 × 550 px** window.
 
 ### Main Window
 
@@ -208,11 +211,14 @@ Processes in this list bypass all driver protections — Hidden/Locked/Read-only
 | Control | Behavior |
 |---------|----------|
 | **Edit box** | Enter process executable name (e.g. `totalcmd64.exe`) |
-| **[Add]** button | Normalizes to lowercase → `IoctlAddTrusted` + `ConfigSaveTrusted` |
-| **[Remove]** button | Clears entire driver trusted list → removes registry entry → reloads remaining entries via `ConfigLoad` |
+| **[Add]** button | Strips path prefix (e.g. `C:\dir\app.exe` → `app.exe`), appends `.exe` if extension missing, lowercases → `IoctlAddTrusted` + `ConfigSaveTrusted` |
+| **[Add running]** button | Opens "Select running process" dialog (procpicker.asm) — Ctrl/Shift multi-select — adds all selected processes at once |
+| **[Remove]** button | Multi-select: `ConfigRemoveTrusted` per selected item → `IoctlRemoveTrusted(empty)` → `ConfigLoad` (reloads remaining) → `RefreshLists` |
+| **[Export]** button | `GuiExportConfig` — opens Save dialog → writes `.vgc` file (UTF-16LE, `[Paths]`/`[Trusted]` sections) |
+| **[Import]** button | `GuiImportConfig` — opens Open dialog → parses `.vgc` → `ConfigLoad` + `RefreshLists` |
 | **Drag & Drop** | Drop an `.exe` file or `.lnk` shortcut onto this panel — executable name extracted and added directly as trusted process |
 
-> **Note:** Removing a trusted process sends an empty `IoctlRemoveTrusted` that wipes the **entire** active trusted list in the driver. `ConfigLoad` immediately reloads all remaining registry entries. The driver provides no per-item removal IOCTL.
+> **Note:** Removing sends an empty `IoctlRemoveTrusted` that wipes the **entire** active trusted list in the driver. `ConfigLoad` immediately reloads all remaining registry entries. The driver provides no per-item removal IOCTL.
 
 ---
 
@@ -289,7 +295,7 @@ vg.exe /service uninstall
 
 Registers `vg.exe` itself as a Windows service named **`VaultGuard`**:
 
-- **Start type:** `SERVICE_DEMAND_START` — manual by default
+- **Start type:** `SERVICE_DEMAND_START` — manual start (immediately started after creation via `StartServiceW`)
 - **Binary path:** `"<full path to vg.exe>" /svcstart`
 - On install: service is created **and immediately started** via `StartServiceW`
 - On uninstall: service is stopped (if running) and deleted via `DeleteService`
@@ -407,7 +413,7 @@ vg.exe /autostart off
 
 ```powershell
 vg.exe /service install
-# Service VaultGuard created (DEMAND_START) and started immediately.
+# Service VaultGuard created (DEMAND_START) and immediately started.
 
 # To remove:
 vg.exe /service uninstall
@@ -487,7 +493,7 @@ The driver holds no persistent state across reboots.
 
 ## Module Analysis
 
-17 MASM source files, each with a single defined responsibility.
+19 MASM source files, each with a single defined responsibility.
 
 ### `main.asm` — Entry Point & Globals
 
@@ -520,7 +526,7 @@ Public globals:
 
 ### `window.asm` — Window Skeleton
 
-Contains exclusively `MainWndProc` and `CreateMainWindow`. Fixed size 680 × 472 px, class `VGMainWnd`.
+Contains exclusively `MainWndProc` and `CreateMainWindow`. Fixed size **700 × 550 px**, class `VGMainWnd`.
 
 On creation, calls `RegisterWindowMessageW("TaskbarCreated")` and stores the dynamic message ID in `g_wmTaskbarCreated` — used both in `MainWndProc` and to unlock the UIPI filter in `_OnCreate`.
 
@@ -547,14 +553,16 @@ On creation, calls `RegisterWindowMessageW("TaskbarCreated")` and stores the dyn
 `_OnCreate(rcx=hwnd)` creates all widgets in a single pass:
 
 ```
-[y=  8] Toggle button
-[y= 10] "Protected files/folders" header  +  [Add path...]  +  [Remove selected]
-[y= 40] ListView Paths (h=220): columns Path/H/L/R/X
-         LVS_REPORT|LVS_SHOWSELALWAYS — multi-select enabled
-[y=278] "Allowed apps (trusted)" header
-[y=276] Trusted edit box  +  [Add]  +  [Remove]
-[y=308] ListView Trusted (h=80, ~3 rows): 1 column Application
-[y=396] Author/copyright static label (centered)
+[y=  8] Toggle button (x=182)
+[y=  8] [Add path...]  (x=364)  +  [Remove selected]  (x=504)
+[y= 10] "Protected files/folders" header (x=20)
+[y= 40] ListView Paths (w=624, h=220): columns Path/H/L/R/X
+         LVS_REPORT|LVS_SHOWSELALWAYS — multi-select, row checkboxes
+[y=278] "Allowed apps (trusted)" header (x=20)
+[y=276] Trusted edit box (x=182)  +  [Add] (x=364)  +  [Add running] (x=440)  +  [Remove] (x=556)
+[y=308] ListView Trusted (w=624, h=140, ~6 rows): 1 column Process name — multi-select
+[y=454] [Export] (x=20)  +  [Import] (x=115)
+[y=482] Author/copyright static label (x=20, w=624, centered)
 ```
 
 Key calls: `InitCommonControlsEx(ICC_LISTVIEW_CLASSES)`, `DragAcceptFiles(TRUE)`, `ChangeWindowMessageFilterEx` for `WM_DROPFILES` / `WM_COPYDATA` / `WM_COPYGLOBALDATA` / `TaskbarCreated` (all MSGFLT_ALLOW — required for High-IL process to receive drops and shell messages from Medium-IL Explorer), `SetTimer(TIMER_STATUS_ID, 2000)`.
@@ -593,14 +601,51 @@ Key calls: `InitCommonControlsEx(ICC_LISTVIEW_CLASSES)`, `DragAcceptFiles(TRUE)`
 | `IDC_BTN_TOGGLE` | `IoctlSetActive(!g_protActive)` |
 | `IDC_BTN_ADD_PATH` | `SHBrowseForFolderW` → stage as `g_pendingPath` → `RefreshLists` |
 | `IDC_BTN_REM_PATH` | Multi-select loop: `LVM_GETNEXTITEM(-1, LVNI_SELECTED)` → `IoctlAddPath(0)` + `ConfigRemovePath` + `LVM_DELETEITEM`; repeat until no more selected |
-| `IDC_BTN_ADD_TRUSTED` | Lowercase → `IoctlAddTrusted` + `ConfigSaveTrusted` |
-| `IDC_BTN_REM_TRUSTED` | `ConfigRemoveTrusted` + `IoctlRemoveTrusted(empty)` + `ConfigLoad` (reloads remaining) + `RefreshLists` |
+| `IDC_BTN_ADD_TRUSTED` | Strip path prefix, append `.exe` if missing, lowercase → `IoctlAddTrusted` + `ConfigSaveTrusted` |
+| `IDC_BTN_ADD_RUNNING` | `ShowProcPicker(hwnd)` → on return > 0: `RefreshLists` |
+| `IDC_BTN_REM_TRUSTED` | Multi-select loop → `ConfigRemoveTrusted` per item; `IoctlRemoveTrusted(empty)` + `ConfigLoad` + `RefreshLists` |
+| `IDC_BTN_EXPORT` | `GuiExportConfig(hwnd)` — writes `.vgc` via `GetSaveFileNameW` |
+| `IDC_BTN_IMPORT` | `GuiImportConfig(hwnd)` + `ConfigLoad` + `RefreshLists` |
 
 **`_OnNotify`** — NM_CLICK on Protected Paths ListView: col 1–4 → toggle flag bit → `IoctlAddPath` + `ConfigSavePath` + `RefreshLists`.
 
 **`UpdateStatusBar`** — `EnsureDriverReady` → `IoctlGetStatus` → updates title bar and toggle button text. Repaint suppressed when state has not changed.
 
 **`RefreshLists`** — `IoctlEnumPaths` + `IoctlEnumTrusted` → `LVM_DELETEALLITEMS` → `_LvInsertItem` for each entry.
+
+---
+
+### `procpicker.asm` — Running Process Picker
+
+`ShowProcPicker(rcx=hwndOwner)` → `eax = count of processes added`
+
+Opens a modal dialog snapped flush against the right edge of the main window.
+
+| Feature | Description |
+|---------|-------------|
+| **Process list** | Snapshot via `CreateToolhelp32Snapshot` + `Process32FirstW/NextW`; system processes filtered |
+| **Multi-select** | Ctrl+Click / range select; all selected entries submitted at once |
+| **Submit** | `[OK]` / double-click: `EnsureDriverReady` → `wcs_ascii_lower_inplace` → `IoctlAddTrusted` + `ConfigSaveTrusted` per item → `EndDialog(count)` |
+| **Dark mode** | Full dark: `WM_ERASEBKGND` + `WM_CTLCOLORSTATIC/BTN` handlers + `_SetLvColors` for ListView |
+| **Positioning** | `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS=9)` on both windows; compensates for invisible DWM shadow border to place dialog flush-right of main window at pixel precision |
+
+---
+
+### `impexp.asm` — GUI Config Import/Export
+
+| Procedure | Description |
+|-----------|-------------|
+| `GuiExportConfig(rcx=hwndOwner)` | `GetSaveFileNameW` (filter `*.vgc`) → creates file → writes UTF-16LE BOM + `[Paths]` section (path`=`decimal flags) + `[Trusted]` section (name`=1`) → confirmation `MessageBoxW` |
+| `GuiImportConfig(rcx=hwndOwner)` | `GetOpenFileNameW` → reads `.vgc` file → parses `[Paths]`/`[Trusted]` sections → `RegSetValueExW` per entry; caller calls `ConfigLoad` + `RefreshLists` afterward |
+
+File format (`.vgc`, UTF-16LE with BOM):
+```
+[Paths]
+C:\Private=2
+C:\Secret=1
+[Trusted]
+totalcmd64.exe=1
+```
 
 ---
 
@@ -747,7 +792,7 @@ Build steps:
 [0] makecab IcoBuilder\vg.sys → LZX CAB → prepend 1078 B ICO header → ICON\vg.ico
 [1] rc.exe /c65001 vg.rc → vg.res
 [2] ml64.exe /c /Cp /Cx /Zi
-    (strutil res driver config cli export service theme listview handlers drop tray layout window main)
+    (strutil res driver_scm device ioctl config cli export service theme listview handlers drop tray layout procpicker impexp window main)
 [3] link.exe /SUBSYSTEM:WINDOWS /NODEFAULTLIB /MANIFEST:EMBED /MANIFESTUAC:requireAdministrator
     Libs: kernel32 user32 advapi32 shell32 ole32 dwmapi gdi32 comctl32 uxtheme cabinet
 [4] dumpbin — verify: no CRT imports, allowed DLL set only
@@ -809,6 +854,8 @@ VaultGuard/
 │   ├── layout.asm      _OnCreate — all controls, UIPI message filters
 │   ├── theme.asm       Dark mode, Mica, ListView colors
 │   ├── handlers.asm    _OnCommand, _OnNotify, UpdateStatusBar, RefreshLists
+│   ├── procpicker.asm  ShowProcPicker — running process picker dialog
+│   ├── impexp.asm      GuiExportConfig, GuiImportConfig — .vgc file import/export
 │   ├── drop.asm        WM_DROPFILES + ResolveLnkPath (IShellLink COM) + trusted panel routing
 │   ├── tray.asm        System tray: _TrayAdd, _TrayRemove, _OnTrayMsg
 │   ├── listview.asm    ListView wrappers
