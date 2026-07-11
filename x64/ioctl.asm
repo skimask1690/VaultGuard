@@ -149,6 +149,12 @@ IoctlAddPath proc
     mov     word ptr [str_drive], ax
 
     ; g_ioBuf layout: [0..3]=DWORD flags, [4..]=NT device path (e.g. \Device\HarddiskVolume3\dir)
+    ; Zero the whole fixed record first: driver receives VG_ORIG_PATH_INPUT_SIZE bytes,
+    ; so any bytes past the path null-terminator must be clean (not stale enum data).
+    lea     rdi, g_ioBuf
+    xor     eax, eax
+    mov     ecx, VG_ORIG_PATH_INPUT_SIZE / 4    ; 0x6414 / 4 = 6405 DWORDs
+    rep     stosd
     lea     rdi, g_ioBuf
     mov     dword ptr [rdi], ebx                ; store protection flags
 
@@ -223,8 +229,13 @@ IoctlRemovePath proc
     mov     word ptr [str_drive], ax
 
     ; Match IoctlAddPath/original format: DWORD reserved + NT device path.
+    ; Zero the whole fixed record first (see IoctlAddPath) — driver gets
+    ; VG_ORIG_PATH_INPUT_SIZE bytes, trailing bytes must not be stale memory.
     lea     rdi, g_ioBuf
-    mov     dword ptr [rdi], 0
+    xor     eax, eax
+    mov     ecx, VG_ORIG_PATH_INPUT_SIZE / 4
+    rep     stosd
+    lea     rdi, g_ioBuf                        ; DWORD reserved already zeroed
 
     mov     r8d, 520
     lea     rdx, [rdi + 4]

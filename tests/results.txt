@@ -1,0 +1,145 @@
+﻿================================================================
+  VaultGuard regression tests   2026-07-11 02:47:11
+================================================================
+
+  [1] Help  -  stdout content
+----------------------------------------------------------------
+  [PASS] /?  contains 'VaultGuard CLI'
+  [PASS] /?  contains 'Commands:'
+  [PASS] /?  lists /enumitems
+  [PASS] /?  lists /settrusted
+  [PASS] /?  lists /driver
+  [PASS] /?  lists /uninstall
+
+  [1b] /driver lifecycle  -  API-backed clrcd service
+----------------------------------------------------------------
+  [PASS] driver install: exit 0
+  [PASS] driver install: clrcd exists
+  [PASS] driver install: default Manual
+  [PASS] driver startup auto: exit 0
+  [PASS] driver startup auto: StartMode Auto
+  [PASS] driver startup manual: exit 0
+  [PASS] driver startup manual: StartMode Manual
+  [PASS] driver install auto: exit 0
+  [PASS] driver install auto: StartMode Auto
+  [PASS] driver start: exit 0
+  [PASS] driver stop: exit 0
+  [PASS] driver uninstall: exit 0
+  [PASS] driver uninstall: clrcd removed
+  [PASS] driver reinstall for remaining tests: exit 0
+
+  [2] /setitem  -  individual flags -> registry
+----------------------------------------------------------------
+  [PASS] setitem Hidden:       flag 0x1 set
+  [PASS] setitem Locked:       flag 0x2 set
+  [PASS] setitem Read-only:    flag 0x4 set
+  [PASS] setitem No-execution: flag 0x8 set
+
+  [3] /setitem Disabled  -  path kept, flags=0
+----------------------------------------------------------------
+  [PASS] setitem Disabled: path stays in registry
+  [PASS] setitem Disabled: flags = 0
+
+  [4] /setitem overwrite  -  last flag wins
+----------------------------------------------------------------
+  [PASS] setitem overwrite: Locked (0x2) replaced Hidden (0x1)
+  [PASS] setitem overwrite: Read-only (0x4) replaced Locked (0x2)
+
+  [5] /enumitems  -  CSV content
+----------------------------------------------------------------
+  [PASS] enumitems: CSV file created
+  [PASS] enumitems: 2 data rows
+  [PASS] enumitems: vg_test_a Hidden=1
+  [PASS] enumitems: vg_test_b Locked=1
+  [PASS] enumitems: vg_test_a ReadOnly=1
+  [PASS] enumitems: vg_test_b NoExec=1
+  [PASS] enumitems: Disabled path present with 0,0,0,0
+
+  [6] /settrusted + /enumtrusted
+----------------------------------------------------------------
+  [PASS] settrusted: first entry in registry
+  [PASS] settrusted: second entry in registry
+  [PASS] enumtrusted: CSV file created
+  [PASS] enumtrusted: 2 rows
+  [PASS] enumtrusted: totalcmd64.exe present
+  [PASS] enumtrusted: explorer.exe present
+
+  [7] /settrusted Disabled  -  removes from registry
+----------------------------------------------------------------
+  [PASS] settrusted Disabled: entry removed
+  [PASS] settrusted Disabled: other entry intact
+  [PASS] enumtrusted after remove: 1 row
+  [PASS] enumtrusted after remove: totalcmd64 stays
+
+  [8] /protection on | off
+----------------------------------------------------------------
+  [PASS] protection off: exit 0
+  [PASS] protection on:  exit 0
+  [PASS] protection bad arg: exit 1
+
+  [9] Error cases  -  exit 1
+----------------------------------------------------------------
+  [PASS] setitem no args: exit 1
+  [PASS] setitem bad mode: exit 1
+  [PASS] settrusted no args: exit 1
+
+  [10] Registry consistency  -  remove-one keeps others
+----------------------------------------------------------------
+  [PASS] trusted: remove-one keeps the other
+  [PASS] registry->CSV consistent: 1 entry correct
+
+  [11] D:\ root drive  -  registry round-trip
+----------------------------------------------------------------
+  [PASS] D:\ setitem Hidden:       0x1
+  [PASS] D:\ setitem Locked:       0x2
+  [PASS] D:\ setitem Read-only:    0x4
+  [PASS] D:\ setitem No-execution: 0x8
+  [PASS] D:\ setitem Disabled:     flags=0
+
+  [12] D:\vg_test_sub  -  registry round-trip
+----------------------------------------------------------------
+  [PASS] D:\vg_test_sub Hidden:       0x1
+  [PASS] D:\vg_test_sub Locked:       0x2
+  [PASS] D:\vg_test_sub Read-only:    0x4
+  [PASS] D:\vg_test_sub No-execution: 0x8
+  [PASS] D:\vg_test_sub Disabled:     flags=0
+
+  [13] D:\ in /enumitems CSV
+----------------------------------------------------------------
+  [PASS] enumitems D: 2 rows
+  [PASS] enumitems: D:\ Locked=1 in CSV
+  [PASS] enumitems: D:\vg_test_sub ReadOnly=1 in CSV
+
+  [14] Driver enforcement  -  Read-only on D:\vg_enforce
+----------------------------------------------------------------
+  [PASS] Read-only: New-Item D:\vg_enforce\new.txt  -  access denied (enforced)
+  [PASS] Read-only: Remove-Item D:\vg_enforce\existing.txt  -  access denied (enforced)
+  [PASS] Read-only: Get-Content D:\vg_enforce\existing.txt  -  succeeded (protection lifted)
+  [PASS] Read-only: Get-ChildItem D:\vg_enforce  -  succeeded (protection lifted)
+  [PASS] Read-only lifted: New-Item D:\vg_enforce\new.txt  -  succeeded (protection lifted)
+  [PASS] Read-only lifted: file created and visible
+
+  [15] Driver enforcement  -  Locked on D:\vg_enforce
+----------------------------------------------------------------
+  [PASS] Locked: Get-ChildItem D:\vg_enforce  -  access denied (enforced)
+  [PASS] Locked: Get-Content D:\vg_enforce\existing.txt  -  access denied (enforced)
+  [PASS] Locked: New-Item D:\vg_enforce\lock_test.txt  -  access denied (enforced)
+  [PASS] Locked lifted: Get-ChildItem D:\vg_enforce  -  succeeded (protection lifted)
+  [PASS] Locked lifted: New-Item D:\vg_enforce\after_lock.txt  -  succeeded (protection lifted)
+
+  [16] Driver enforcement  -  Read-only on D:\ root
+----------------------------------------------------------------
+  [PASS] D:\ Read-only: New-Item D:\vg_root_test.txt  -  access denied (enforced)
+  [PASS] D:\ Read-only: Get-ChildItem D:\  -  succeeded (protection lifted)
+  [PASS] D:\ Read-only lifted: New-Item D:\vg_root_test.txt  -  succeeded (protection lifted)
+
+  [17] /uninstall  -  full product cleanup
+----------------------------------------------------------------
+  [PASS] full uninstall: exit 0
+  [PASS] full uninstall: app service removed
+  [PASS] full uninstall: clrcd service removed
+  [PASS] full uninstall: HKCU Software\\VG removed
+
+================================================================
+  ALL PASS   84 / 84  (skipped: 0)
+================================================================
