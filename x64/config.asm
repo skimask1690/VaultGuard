@@ -17,19 +17,25 @@
 
 option casemap:none
 include consts.inc
+include globals.inc
 
 EXTRN RegCreateKeyExW   :PROC
 EXTRN RegOpenKeyExW     :PROC
 EXTRN RegSetValueExW    :PROC
 EXTRN RegDeleteValueW   :PROC
 EXTRN RegDeleteKeyW     :PROC
+EXTRN GetWindowsDirectoryW :PROC
 EXTRN RegEnumValueW     :PROC
 EXTRN RegCloseKey       :PROC
 EXTRN EnsureDriverReady :PROC
 EXTRN CloseDevice       :PROC
 EXTRN IoctlAddPath      :PROC
 EXTRN IoctlAddTrusted   :PROC
+EXTRN IoctlBuildPathRecord     :PROC
+EXTRN IoctlSendPathBuffer      :PROC
+EXTRN IoctlSendTrustedBuffer   :PROC
 EXTRN wcs_ascii_lower_inplace :PROC
+EXTRN wcscpy_p          :PROC
 
 .data?
     cfg_hkey     dq ?           ; phkResult scratch
@@ -303,87 +309,132 @@ ConfigDeleteAll endp
 
 ; ==============================================================================
 ; ConfigLoad  →  void
-; Enumerates both registry keys and pushes every entry to the driver.
-; Stack: entry rsp%16=8; push rbx,rsi (+16)→8; sub 48h (+72)→0 ✓
-; RegEnumValueW 8 args: 4 stack args at [rsp+20h]..[rsp+38h] (within 72 bytes ✓)
-; Control flow:
-;   open key → if fail jump past section
-;   EnsureDriverReady → if fail jump to close-key label (no CloseDevice)
-;   loop: RegEnumValueW → Ioctl* → inc index
-;   @done: CloseDevice; falls through to @drv_fail: RegCloseKey
+; Enumerates each registry key, builds one packed record array, then replaces the
+; corresponding complete driver list with a single IOCTL.  The driver's 0x400
+; and 0x408 handlers are SET operations, not append operations.
+; Stack: 6 pushes leave rsp%16=8; sub 58h leaves rsp%16=0.
 ; ==============================================================================
 PUBLIC ConfigLoad
 ConfigLoad proc
     push    rbx
     push    rsi
-    sub     rsp, 48h
+    push    rdi
+    push    r12
+    push    r13
+    push    r14
+    sub     rsp, 58h
 
-    ; ── Paths ──────────────────────────────────────────────────────────────────
+    ; ── Paths: build packed VG_PATH_RECORD array in g_ioBuf ───────────────────
+    lea     rdi, g_ioBuf
+    xor     eax, eax
+    mov     ecx, VG_IOCTL_BUF_SIZE / 8
+    rep     stosq
+    xor     r12d, r12d                      ; active path record count
+
+    ; Keep one syntactically valid flags=0 record in slot 0. The driver does
+    ; not clear the last path for a completely zero-filled buffer, but it does
+    ; clear the list when parsing a valid path record whose flags are zero.
+    ; Any active path below overwrites this slot.
+    mov     edx, 520
+    lea     rcx, cfg_name_buf
+    call    GetWindowsDirectoryW             ; normally C:\Windows
+    test    eax, eax
+    jz      @cl_paths_open
+    cmp     eax, 3
+    jb      @cl_paths_open
+    mov     word ptr [cfg_name_buf + 6], 0  ; keep drive root, e.g. C:\
+    lea     r8, cfg_name_buf
+    xor     edx, edx
+    lea     rcx, g_ioBuf
+    call    IoctlBuildPathRecord
+
+@cl_paths_open:
     lea     rcx, str_key_paths
     call    _CfgOpen
-    test    rax, rax
-    jz      @cl_do_trusted          ; key not present, skip to Trusted
-
-    mov     rbx, rax                ; hKey (paths)
-
-    call    EnsureDriverReady
-    test    eax, eax
-    jz      @cl_paths_drv_fail      ; driver not ready — close key only
-
-    xor     esi, esi                ; dwIndex = 0
+    mov     rbx, rax                         ; hKey or 0
+    test    rbx, rbx
+    jz      @cl_paths_apply
+    xor     esi, esi                         ; registry index
 
 @cl_paths_loop:
-    mov     cfg_namelen, 520        ; buffer capacity in WCHARs (reset each iter)
+    mov     cfg_namelen, 520
     mov     cfg_datalen, 4
-
     lea     rax, cfg_datalen
-    mov     qword ptr [rsp+38h], rax        ; lpcbData
+    mov     qword ptr [rsp+38h], rax
     lea     rax, cfg_flags
-    mov     qword ptr [rsp+30h], rax        ; lpData = &cfg_flags
+    mov     qword ptr [rsp+30h], rax
     lea     rax, cfg_type
-    mov     qword ptr [rsp+28h], rax        ; lpType
-    mov     qword ptr [rsp+20h], 0          ; lpReserved = NULL
-    lea     r9, cfg_namelen                 ; lpcchValueName
-    lea     r8, cfg_name_buf                ; lpValueName (output: path string)
-    mov     edx, esi                        ; dwIndex
+    mov     qword ptr [rsp+28h], rax
+    mov     qword ptr [rsp+20h], 0
+    lea     r9, cfg_namelen
+    lea     r8, cfg_name_buf
+    mov     edx, esi
     mov     rcx, rbx
     call    RegEnumValueW
     cmp     eax, ERROR_NO_MORE_ITEMS
-    je      @cl_paths_done
+    je      @cl_paths_apply
     test    eax, eax
-    jnz     @cl_paths_next                  ; other error — skip entry
+    jnz     @cl_paths_next
 
-    mov     ecx, cfg_flags                  ; full flags including VG_FLAG_DISABLED
-    test    ecx, VG_FLAG_DISABLED
-    jnz     @cl_paths_next                  ; disabled → don't push to driver
-    and     ecx, 0Fh
-    jz      @cl_paths_next                  ; no active protection bits → skip
-    lea     rdx, cfg_name_buf               ; path (value name from registry)
-    call    IoctlAddPath
+    mov     r13d, cfg_flags
+    test    r13d, VG_FLAG_DISABLED
+    jnz     @cl_paths_next
+    and     r13d, 0Fh
+    jz      @cl_paths_next
+    cmp     r12d, (VG_IOCTL_BUF_SIZE / VG_PATH_RECORD_SIZE)
+    jae     @cl_paths_next                  ; buffer capacity reached
+
+    mov     eax, r12d
+    imul    eax, VG_PATH_RECORD_SIZE
+    lea     rcx, g_ioBuf
+    add     rcx, rax                        ; destination record
+    mov     edx, r13d
+    lea     r8, cfg_name_buf
+    call    IoctlBuildPathRecord
+    test    eax, eax
+    jz      @cl_paths_next
+    inc     r12d
 
 @cl_paths_next:
     inc     esi
     jmp     @cl_paths_loop
 
-@cl_paths_done:
+@cl_paths_apply:
+    call    EnsureDriverReady
+    test    eax, eax
+    jz      @cl_paths_close_key
+
+    ; Preserve the original five-record minimum.  Larger arrays are accepted
+    ; by the driver and fit in g_ioBuf up to its fixed capacity.
+    mov     edx, VG_ORIG_PATH_INPUT_SIZE
+    cmp     r12d, 5
+    jbe     @cl_paths_send
+    mov     edx, r12d
+    imul    edx, VG_PATH_RECORD_SIZE
+@cl_paths_send:
+    lea     rcx, g_ioBuf
+    call    IoctlSendPathBuffer
     call    CloseDevice
-@cl_paths_drv_fail:
+
+@cl_paths_close_key:
+    test    rbx, rbx
+    jz      @cl_do_trusted
     mov     rcx, rbx
     call    RegCloseKey
 
-    ; ── Trusted ────────────────────────────────────────────────────────────────
+    ; ── Trusted: build packed VG_TRUSTED_RECORD array in g_ioBuf ──────────────
 @cl_do_trusted:
+    lea     rdi, g_ioBuf
+    xor     eax, eax
+    mov     ecx, VG_IOCTL_BUF_SIZE / 8
+    rep     stosq
+    xor     r12d, r12d                      ; active trusted record count
+
     lea     rcx, str_key_trusted
     call    _CfgOpen
-    test    rax, rax
-    jz      @cl_done
-
     mov     rbx, rax
-
-    call    EnsureDriverReady
-    test    eax, eax
-    jz      @cl_trusted_drv_fail
-
+    test    rbx, rbx
+    jz      @cl_trusted_apply
     xor     esi, esi
 
 @cl_trusted_loop:
@@ -403,32 +454,54 @@ ConfigLoad proc
     mov     rcx, rbx
     call    RegEnumValueW
     cmp     eax, ERROR_NO_MORE_ITEMS
-    je      @cl_trusted_done
+    je      @cl_trusted_apply
     test    eax, eax
     jnz     @cl_trusted_next
 
-    ; data = 0 means disabled → don't push to driver
     mov     ecx, cfg_flags
     test    ecx, ecx
     jz      @cl_trusted_next
+    cmp     r12d, (VG_IOCTL_BUF_SIZE / VG_TRUSTED_RECORD_SIZE)
+    jae     @cl_trusted_next
 
     lea     rcx, cfg_name_buf
     call    wcs_ascii_lower_inplace
-    lea     rcx, cfg_name_buf
-    call    IoctlAddTrusted
+    mov     word ptr [cfg_name_buf + 398], 0 ; driver name field is 200 WCHARs
+
+    mov     eax, r12d
+    imul    eax, VG_TRUSTED_RECORD_SIZE
+    lea     rcx, [g_ioBuf + VG_TRUSTED_RECORD_NAME]
+    add     rcx, rax
+    lea     rdx, cfg_name_buf
+    call    wcscpy_p
+    inc     r12d
 
 @cl_trusted_next:
     inc     esi
     jmp     @cl_trusted_loop
 
-@cl_trusted_done:
+@cl_trusted_apply:
+    call    EnsureDriverReady
+    test    eax, eax
+    jz      @cl_trusted_close_key
+    mov     edx, r12d
+    imul    edx, VG_TRUSTED_RECORD_SIZE
+    lea     rcx, g_ioBuf
+    call    IoctlSendTrustedBuffer
     call    CloseDevice
-@cl_trusted_drv_fail:
+
+@cl_trusted_close_key:
+    test    rbx, rbx
+    jz      @cl_done
     mov     rcx, rbx
     call    RegCloseKey
 
 @cl_done:
-    add     rsp, 48h
+    add     rsp, 58h
+    pop     r14
+    pop     r13
+    pop     r12
+    pop     rdi
     pop     rsi
     pop     rbx
     ret

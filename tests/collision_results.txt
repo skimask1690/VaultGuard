@@ -1,0 +1,81 @@
+
+  Last-rule and complete-list transitions
+------------------------------------------------------------------------
+  [PASS] one path locked = DENY
+  [PASS] adding B keeps A locked = DENY
+  [PASS] B is locked = DENY
+  [PASS] disabling A lifts A = ALLOW
+  [PASS] disabling A keeps B locked = DENY
+  [PASS] disabling last path lifts B = ALLOW
+  [PASS] last-path cycle 1 locked = DENY
+  [PASS] last-path cycle 1 disabled = ALLOW
+  [PASS] last-path cycle 2 locked = DENY
+  [PASS] last-path cycle 2 disabled = ALLOW
+  [PASS] last-path cycle 3 locked = DENY
+  [PASS] last-path cycle 3 disabled = ALLOW
+
+  More records than the original five-slot client
+------------------------------------------------------------------------
+  [PASS] 7 paths: first active = DENY
+  [PASS] 7 paths: middle active = DENY
+  [PASS] 7 paths: last active = DENY
+  [PASS] 7 paths: middle disabled = ALLOW
+  [PASS] 7 paths: first survives middle change = DENY
+  [PASS] 7 paths: last survives middle change = DENY
+
+  Global trusted-name behavior and update order
+------------------------------------------------------------------------
+  [PASS] untrusted same-name copy A = DENY
+  [PASS] untrusted same-name copy B = DENY
+  [PASS] trusted basename copy A -> path A = ALLOW
+  [PASS] trusted basename copy A -> path B = ALLOW
+  [PASS] trusted basename copy B -> path A = ALLOW
+  [PASS] trusted basename copy B -> path B = ALLOW
+  [PASS] disabled collision basename denied = DENY
+  [PASS] other trusted survives disable = ALLOW
+  [PASS] path/case/extension normalization = ALLOW
+  [PASS] trusted-first then path A = ALLOW
+  [PASS] trusted-first then path B = ALLOW
+
+  Six trusted entries and removal from the middle
+------------------------------------------------------------------------
+  [PASS] 6 trusted: first active = ALLOW
+  [PASS] 6 trusted: last active = ALLOW
+  [PASS] 6 trusted: middle removed = DENY
+  [PASS] 6 trusted: first survives = ALLOW
+  [PASS] 6 trusted: last survives = ALLOW
+
+  Executable is both protected and trusted
+------------------------------------------------------------------------
+  [PASS] protected executable cannot bootstrap itself = DENY
+  [PASS] same basename outside protected path is trusted = ALLOW
+  [PASS] after lifting executable path it can start and read = ALLOW
+
+  Parent/child precedence and No-execution collision
+------------------------------------------------------------------------
+  [PASS] parent Locked then child Disabled = DENY
+  [PASS] child Disabled then parent Locked = DENY
+  [PASS] parent No-exec then child Disabled = DENY
+  [PASS] child Disabled then parent No-exec = DENY
+  [PASS] lifting parent No-exec allows start = ALLOW
+  [PASS] child Locked overrides parent Read-only for read = DENY
+  [PASS] parent Read-only permits sibling read = ALLOW
+  [PASS] parent Read-only blocks sibling write = DENY
+
+  Protection toggle and driver restart persistence
+------------------------------------------------------------------------
+  [PASS] global off raw path A = ALLOW
+  [PASS] global off raw path B = ALLOW
+  [PASS] global on raw path A = DENY
+  [PASS] global on trusted A = ALLOW
+  [PASS] restart raw path A restored = DENY
+  [PASS] restart raw path B restored = DENY
+  [PASS] restart trusted collision restored = ALLOW
+  [PASS] restart trusted other restored = ALLOW
+
+  Registry counts after collision matrix
+------------------------------------------------------------------------
+  [PASS] configured path count = 2
+  [PASS] configured trusted count = 2
+
+  ALL PASS   55 / 55

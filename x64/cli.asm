@@ -204,10 +204,100 @@ msg_err_driver    dw 'E','r','r','o','r',':',' ','D','r','i','v','e','r',' ','m'
 ; ==============================================================================
 .data
 
+cli_trusted_buf dw (MAX_PATH + 8) dup(0)
+
 ; ==============================================================================
 ; CODE
 ; ==============================================================================
 .code
+
+; ==============================================================================
+; _CliNormalizeTrusted  rcx=input -> rax=normalized buffer or 0
+; Keeps the basename, lowercases ASCII, and appends .exe when missing. The
+; driver compares at most 199 WCHARs in its fixed process-name field.
+; ==============================================================================
+_CliNormalizeTrusted proc
+    push    rbx
+    push    rsi
+    push    rdi
+    sub     rsp, 20h
+
+    mov     rsi, rcx
+    mov     rbx, rcx                    ; basename start
+@cnt_scan:
+    movzx   eax, word ptr [rsi]
+    test    ax, ax
+    jz      @cnt_copy_begin
+    cmp     ax, '\'
+    je      @cnt_sep
+    cmp     ax, '/'
+    je      @cnt_sep
+    add     rsi, 2
+    jmp     @cnt_scan
+@cnt_sep:
+    add     rsi, 2
+    mov     rbx, rsi
+    jmp     @cnt_scan
+
+@cnt_copy_begin:
+    cmp     word ptr [rbx], 0
+    je      @cnt_fail
+    lea     rdi, cli_trusted_buf
+    xor     ecx, ecx                    ; copied character count
+@cnt_copy:
+    movzx   eax, word ptr [rbx]
+    test    ax, ax
+    jz      @cnt_copied
+    cmp     ecx, 199
+    jae     @cnt_fail
+    cmp     ax, 'A'
+    jb      @cnt_store
+    cmp     ax, 'Z'
+    ja      @cnt_store
+    add     ax, 20h
+@cnt_store:
+    mov     word ptr [rdi + rcx*2], ax
+    inc     ecx
+    add     rbx, 2
+    jmp     @cnt_copy
+
+@cnt_copied:
+    mov     word ptr [rdi + rcx*2], 0
+    cmp     ecx, 4
+    jb      @cnt_append
+    mov     eax, ecx
+    sub     eax, 4
+    lea     rdx, [rdi + rax*2]
+    cmp     word ptr [rdx], '.'
+    jne     @cnt_append
+    cmp     word ptr [rdx+2], 'e'
+    jne     @cnt_append
+    cmp     word ptr [rdx+4], 'x'
+    jne     @cnt_append
+    cmp     word ptr [rdx+6], 'e'
+    je      @cnt_ok
+
+@cnt_append:
+    cmp     ecx, 195                    ; basename + ".exe" must fit 199 WCHARs
+    ja      @cnt_fail
+    mov     word ptr [rdi + rcx*2], '.'
+    mov     word ptr [rdi + rcx*2 + 2], 'e'
+    mov     word ptr [rdi + rcx*2 + 4], 'x'
+    mov     word ptr [rdi + rcx*2 + 6], 'e'
+    mov     word ptr [rdi + rcx*2 + 8], 0
+
+@cnt_ok:
+    lea     rax, cli_trusted_buf
+    jmp     @cnt_ret
+@cnt_fail:
+    xor     eax, eax
+@cnt_ret:
+    add     rsp, 20h
+    pop     rdi
+    pop     rsi
+    pop     rbx
+    ret
+_CliNormalizeTrusted endp
 
 ; ==============================================================================
 ; _CliFinish  ecx=exitCode  →  never returns
@@ -960,6 +1050,7 @@ CliDispatch proc
     mov     rcx, r12
     call    ConfigSavePath
     call    CloseDevice
+    call    ConfigLoad                 ; restore complete path/trusted arrays
     lea     rcx, msg_ok_setitem
     call    WideWriteLn
     xor     ecx, ecx
@@ -1019,6 +1110,7 @@ CliDispatch proc
     mov     edx, r14d
     mov     rcx, r12
     call    ConfigSavePath
+    call    ConfigLoad                 ; single-item IOCTL above replaced the list
     lea     rcx, msg_ok_setitem
     call    WideWriteLn
     xor     ecx, ecx
@@ -1036,6 +1128,12 @@ CliDispatch proc
     jl      @cd_bad_arg
     mov     r12, qword ptr [rsi + 2*8]  ; name
     mov     r13, qword ptr [rsi + 3*8]  ; mode
+
+    mov     rcx, r12
+    call    _CliNormalizeTrusted
+    test    rax, rax
+    jz      @cd_bad_arg
+    mov     r12, rax
 
     lea     rdx, str_disabled
     mov     rcx, r13
@@ -1056,6 +1154,7 @@ CliDispatch proc
     call    CloseDevice
     mov     rcx, r12
     call    ConfigRemoveTrusted
+    call    ConfigLoad                 ; reload every remaining trusted record
     lea     rcx, msg_ok_settrusted
     call    WideWriteLn
     xor     ecx, ecx
@@ -1081,6 +1180,7 @@ CliDispatch proc
     call    CloseDevice
     mov     rcx, r12
     call    ConfigSaveTrusted
+    call    ConfigLoad                 ; reload complete trusted array
     lea     rcx, msg_ok_settrusted
     call    WideWriteLn
     xor     ecx, ecx

@@ -41,6 +41,7 @@ EXTRN EnsureDriverReady         :PROC
 EXTRN CloseDevice               :PROC
 EXTRN IoctlAddTrusted           :PROC
 EXTRN ConfigSaveTrusted         :PROC
+EXTRN ConfigLoad                :PROC
 
 ; ==============================================================================
 ; CONSTANT STRINGS
@@ -433,6 +434,7 @@ _ProcPickDlgProc proc
 
 @pp_select_done:
     call    CloseDevice
+    call    ConfigLoad                 ; individual setters replace; restore full list
     test    r13d, r13d
     jz      @pp_ok_nothing
 

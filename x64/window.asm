@@ -27,6 +27,8 @@ EXTRN LoadIconW                 :PROC
 EXTRN KillTimer                 :PROC
 EXTRN DeleteObject              :PROC
 EXTRN GetClientRect             :PROC
+EXTRN GetDpiForSystem            :PROC
+EXTRN AdjustWindowRectExForDpi   :PROC
 EXTRN FillRect                  :PROC
 EXTRN SetBkMode                 :PROC
 EXTRN SetBkColor                :PROC
@@ -268,14 +270,22 @@ MainWndProc endp
 ; CreateMainWindow  →  rax = hwnd or NULL
 ;
 ; Registers class, creates a fixed modern Mica window.
-; Stack: entry rsp%16=8; push rbx,rsi (+16)→8; sub 78h (+120)→0 ✓
-; WNDCLASSEXW at [rsp+20h] (80 bytes)
+; Stack: entry rsp%16=8; push rbx,rsi (+16)→8; sub 98h (+152)→0 ✓
+; WNDCLASSEXW at [rsp+20h] (80 bytes); DPI-scaling RECT at [rsp+78h] (16
+; bytes) + dpi DWORD at [rsp+88h]/[rsp+8Ch], both free once WNDCLASSEXW's
+; slot is done with (RegisterClassExW has already consumed it by the time
+; either is touched). 98h (152) chosen instead of the tempting 90h (144)
+; because 144 mod 16 = 0 but 152 mod 16 = 8 -- alignment must match the
+; ORIGINAL 78h's residue (also 8 mod 16), not just be a round number, or
+; every CALL after this sub lands on a misaligned rsp. Got this wrong on
+; the first pass (used 90h) and it crashed inside USER32.dll (0xc0000005)
+; from the resulting misaligned stack, not from bad arguments.
 ; ==============================================================================
 PUBLIC CreateMainWindow
 CreateMainWindow proc
     push    rbx
     push    rsi
-    sub     rsp, 78h
+    sub     rsp, 98h
 
     ; Register "TaskbarCreated" message so WndProc can re-add tray icon
     ; if Explorer restarts (e.g. crash, logon race condition at startup).
@@ -325,13 +335,92 @@ CreateMainWindow proc
     test    ax, ax
     jz      @cmw_fail
 
+    ; ── DPI-aware window size ────────────────────────────────────────────
+    ; 700x550 was authored as the TOTAL window size at 96 DPI (100%). A
+    ; fixed pixel guess like that clips content or leaves dead space once
+    ; the actual caption/border overhead differs (Windows theme, DPI) --
+    ; same bug CMDT's window.asm hit and fixed the same way. Recover the
+    ; TRUE client size at 96 DPI first (AdjustWindowRectExForDpi on an
+    ; empty rect yields exactly the frame overhead, which we subtract from
+    ; 700/550), then re-expand that client size at the real runtime DPI to
+    ; get the correct total size regardless of theme/DPI.
+    mov     dword ptr [rsp+78h], 0              ; RECT.left
+    mov     dword ptr [rsp+7Ch], 0              ; RECT.top
+    mov     dword ptr [rsp+80h], 0              ; RECT.right
+    mov     dword ptr [rsp+84h], 0              ; RECT.bottom
+    lea     rcx, [rsp+78h]                      ; lpRect
+    mov     edx, (STY_MAINWIN + WS_CLIPCHILDREN); dwStyle
+    xor     r8d, r8d                            ; bMenu = FALSE
+    xor     r9d, r9d                            ; dwExStyle = 0
+    mov     dword ptr [rsp+20h], 96             ; dpi = 96 (5th param, on stack)
+    call    AdjustWindowRectExForDpi
+
+    call    GetDpiForSystem
+    mov     dword ptr [rsp+88h], eax            ; stash runtime dpi
+
+    ; Compute both overhead deltas from the 1st-call RECT BEFORE touching
+    ; any of its fields (left/top can be negative, e.g. -31 for a caption,
+    ; so they must be read as signed values here, not assumed zero).
+    mov     eax, dword ptr [rsp+80h]
+    sub     eax, dword ptr [rsp+78h]            ; overheadW96 = right - left
+    mov     edx, dword ptr [rsp+84h]
+    sub     edx, dword ptr [rsp+7Ch]            ; overheadH96 = bottom - top
+
+    mov     ecx, 700
+    sub     ecx, eax                            ; clientW96 = 700 - overheadW96
+    mov     r10d, 550
+    sub     r10d, edx                           ; clientH96 = 550 - overheadH96
+
+    ; AdjustWindowRectExForDpi does NOT scale the client rect it's given --
+    ; it only adds correctly-sized frame/caption padding for the requested
+    ; DPI. The client size itself must be scaled by hand first (same
+    ; val*dpi/96 pattern as every control in layout.asm), or the window
+    ; barely grows at all while the DPI-scaled controls inside it do, and
+    ; content overflows past the right edge -- exactly the bug reported
+    ; after the first pass of this fix.
+    mov     eax, ecx
+    imul    eax, dword ptr [rsp+88h]
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     r11d, eax                           ; clientW_runtime
+
+    mov     eax, r10d
+    imul    eax, dword ptr [rsp+88h]
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     r10d, eax                           ; clientH_runtime
+
+    mov     dword ptr [rsp+78h], 0              ; reuse RECT for the 2nd call
+    mov     dword ptr [rsp+7Ch], 0
+    mov     dword ptr [rsp+80h], r11d           ; RECT.right = clientW_runtime
+    mov     dword ptr [rsp+84h], r10d           ; RECT.bottom = clientH_runtime
+
+    lea     rcx, [rsp+78h]                       ; lpRect (now {0,0,clientW_runtime,clientH_runtime})
+    mov     edx, (STY_MAINWIN + WS_CLIPCHILDREN)
+    xor     r8d, r8d
+    xor     r9d, r9d
+    mov     eax, dword ptr [rsp+88h]
+    mov     dword ptr [rsp+20h], eax             ; dpi = runtime dpi
+    call    AdjustWindowRectExForDpi
+
+    mov     eax, dword ptr [rsp+80h]
+    sub     eax, dword ptr [rsp+78h]             ; final total width
+    mov     dword ptr [rsp+88h], eax             ; stash (rsp+30h gets clobbered below)
+    mov     eax, dword ptr [rsp+84h]
+    sub     eax, dword ptr [rsp+7Ch]             ; final total height
+    mov     dword ptr [rsp+8Ch], eax
+
     mov     rax, g_hInstance
     mov     qword ptr [rsp+58h], 0              ; lpParam = NULL
     mov     qword ptr [rsp+50h], rax            ; hInstance
     mov     qword ptr [rsp+48h], 0              ; hMenu = NULL
     mov     qword ptr [rsp+40h], 0              ; hWndParent = NULL (top-level)
-    mov     dword ptr [rsp+38h], 550            ; nHeight
-    mov     dword ptr [rsp+30h], 700            ; nWidth
+    mov     eax, dword ptr [rsp+8Ch]
+    mov     dword ptr [rsp+38h], eax            ; nHeight
+    mov     eax, dword ptr [rsp+88h]
+    mov     dword ptr [rsp+30h], eax            ; nWidth
     mov     dword ptr [rsp+28h], 080000000h     ; Y = CW_USEDEFAULT
     mov     dword ptr [rsp+20h], 080000000h     ; X = CW_USEDEFAULT
     mov     r9d, (STY_MAINWIN + WS_CLIPCHILDREN)
@@ -365,7 +454,7 @@ CreateMainWindow proc
 @cmw_fail:
     xor     eax, eax
 @cmw_ret:
-    add     rsp, 78h
+    add     rsp, 98h
     pop     rsi
     pop     rbx
     ret

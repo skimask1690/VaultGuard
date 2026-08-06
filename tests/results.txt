@@ -1,5 +1,5 @@
-﻿================================================================
-  VaultGuard regression tests   2026-07-11 02:47:11
+================================================================
+  VaultGuard regression tests   2026-08-07 01:37:41
 ================================================================
 
   [1] Help  -  stdout content
@@ -88,50 +88,50 @@
   [PASS] trusted: remove-one keeps the other
   [PASS] registry->CSV consistent: 1 entry correct
 
-  [11] D:\ root drive  -  registry round-trip
+  [11] X:\ root drive  -  registry round-trip
 ----------------------------------------------------------------
-  [PASS] D:\ setitem Hidden:       0x1
-  [PASS] D:\ setitem Locked:       0x2
-  [PASS] D:\ setitem Read-only:    0x4
-  [PASS] D:\ setitem No-execution: 0x8
-  [PASS] D:\ setitem Disabled:     flags=0
+  [PASS] X:\ setitem Hidden:       0x1
+  [PASS] X:\ setitem Locked:       0x2
+  [PASS] X:\ setitem Read-only:    0x4
+  [PASS] X:\ setitem No-execution: 0x8
+  [PASS] X:\ setitem Disabled:     flags=0
 
-  [12] D:\vg_test_sub  -  registry round-trip
+  [12] X:\vg_test_sub  -  registry round-trip
 ----------------------------------------------------------------
-  [PASS] D:\vg_test_sub Hidden:       0x1
-  [PASS] D:\vg_test_sub Locked:       0x2
-  [PASS] D:\vg_test_sub Read-only:    0x4
-  [PASS] D:\vg_test_sub No-execution: 0x8
-  [PASS] D:\vg_test_sub Disabled:     flags=0
+  [PASS] X:\vg_test_sub Hidden:       0x1
+  [PASS] X:\vg_test_sub Locked:       0x2
+  [PASS] X:\vg_test_sub Read-only:    0x4
+  [PASS] X:\vg_test_sub No-execution: 0x8
+  [PASS] X:\vg_test_sub Disabled:     flags=0
 
-  [13] D:\ in /enumitems CSV
+  [13] X:\ in /enumitems CSV
 ----------------------------------------------------------------
-  [PASS] enumitems D: 2 rows
-  [PASS] enumitems: D:\ Locked=1 in CSV
-  [PASS] enumitems: D:\vg_test_sub ReadOnly=1 in CSV
+  [PASS] enumitems X: 2 rows
+  [PASS] enumitems: X:\ Locked=1 in CSV
+  [PASS] enumitems: X:\vg_test_sub ReadOnly=1 in CSV
 
-  [14] Driver enforcement  -  Read-only on D:\vg_enforce
+  [14] Driver enforcement  -  Read-only on X:\vg_enforce
 ----------------------------------------------------------------
-  [PASS] Read-only: New-Item D:\vg_enforce\new.txt  -  access denied (enforced)
-  [PASS] Read-only: Remove-Item D:\vg_enforce\existing.txt  -  access denied (enforced)
-  [PASS] Read-only: Get-Content D:\vg_enforce\existing.txt  -  succeeded (protection lifted)
-  [PASS] Read-only: Get-ChildItem D:\vg_enforce  -  succeeded (protection lifted)
-  [PASS] Read-only lifted: New-Item D:\vg_enforce\new.txt  -  succeeded (protection lifted)
+  [PASS] Read-only: New-Item X:\vg_enforce\new.txt  -  access denied (enforced)
+  [PASS] Read-only: Remove-Item X:\vg_enforce\existing.txt  -  access denied (enforced)
+  [PASS] Read-only: Get-Content X:\vg_enforce\existing.txt  -  succeeded (protection lifted)
+  [PASS] Read-only: Get-ChildItem X:\vg_enforce  -  succeeded (protection lifted)
+  [PASS] Read-only lifted: New-Item X:\vg_enforce\new.txt  -  succeeded (protection lifted)
   [PASS] Read-only lifted: file created and visible
 
-  [15] Driver enforcement  -  Locked on D:\vg_enforce
+  [15] Driver enforcement  -  Locked on X:\vg_enforce
 ----------------------------------------------------------------
-  [PASS] Locked: Get-ChildItem D:\vg_enforce  -  access denied (enforced)
-  [PASS] Locked: Get-Content D:\vg_enforce\existing.txt  -  access denied (enforced)
-  [PASS] Locked: New-Item D:\vg_enforce\lock_test.txt  -  access denied (enforced)
-  [PASS] Locked lifted: Get-ChildItem D:\vg_enforce  -  succeeded (protection lifted)
-  [PASS] Locked lifted: New-Item D:\vg_enforce\after_lock.txt  -  succeeded (protection lifted)
+  [PASS] Locked: Get-ChildItem X:\vg_enforce  -  access denied (enforced)
+  [PASS] Locked: Get-Content X:\vg_enforce\existing.txt  -  access denied (enforced)
+  [PASS] Locked: New-Item X:\vg_enforce\lock_test.txt  -  access denied (enforced)
+  [PASS] Locked lifted: Get-ChildItem X:\vg_enforce  -  succeeded (protection lifted)
+  [PASS] Locked lifted: New-Item X:\vg_enforce\after_lock.txt  -  succeeded (protection lifted)
 
-  [16] Driver enforcement  -  Read-only on D:\ root
+  [16] Driver enforcement  -  Read-only on X:\ root
 ----------------------------------------------------------------
-  [PASS] D:\ Read-only: New-Item D:\vg_root_test.txt  -  access denied (enforced)
-  [PASS] D:\ Read-only: Get-ChildItem D:\  -  succeeded (protection lifted)
-  [PASS] D:\ Read-only lifted: New-Item D:\vg_root_test.txt  -  succeeded (protection lifted)
+  [PASS] X:\ Read-only: New-Item X:\vg_root_test.txt  -  access denied (enforced)
+  [PASS] X:\ Read-only: Get-ChildItem X:\  -  succeeded (protection lifted)
+  [PASS] X:\ Read-only lifted: New-Item X:\vg_root_test.txt  -  succeeded (protection lifted)
 
   [17] /uninstall  -  full product cleanup
 ----------------------------------------------------------------

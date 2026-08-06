@@ -40,7 +40,13 @@ New-Item -ItemType Directory -Path $Path -Force | Out-Null
 
 Write-Header "Test 1: Create share and access when unprotected"
 # Create SMB share
-$shareResult = net share "${ShareName}=${Path}" "/GRANT:Everyone,FULL"
+# "Everyone" is the English well-known-group name; net.exe resolves account
+# names via the OS locale, so this fails with error 1332 on non-English
+# Windows (e.g. Polish, where the group is "Wszyscy"). Resolve the S-1-1-0
+# SID to whatever the local OS calls it instead, so this works regardless
+# of display language.
+$everyoneName = (New-Object System.Security.Principal.SecurityIdentifier("S-1-1-0")).Translate([System.Security.Principal.NTAccount]).Value
+$shareResult = net share "${ShareName}=${Path}" "/GRANT:${everyoneName},FULL"
 if ($LASTEXITCODE -eq 0) {
     Write-Pass "SMB Share created successfully"
 } else {

@@ -368,6 +368,7 @@ _FlagsDlgApply proc
     mov     edx, r12d
     mov     rcx, qword ptr [dlg_path_ptr]
     call    ConfigSavePath                  ; persist flags to registry only after driver accepted
+    call    ConfigLoad                      ; restore complete driver arrays
     jmp     @fda_commit
 
 @fda_zero_flags:
@@ -382,6 +383,7 @@ _FlagsDlgApply proc
     xor     edx, edx
     mov     rcx, qword ptr [dlg_path_ptr]
     call    ConfigSavePath                  ; write flags=0 to registry
+    call    ConfigLoad
 
 @fda_commit:
     mov     dword ptr [dlg_cur_flags], r12d ; remember for next change check
@@ -620,6 +622,7 @@ _OnNotify proc
     mov     edx, r14d
     lea     rcx, lv_text_buf
     call    ConfigSavePath
+    call    ConfigLoad
     jmp     @on_cp_refresh
 
 @on_cp_zero_flags:
@@ -633,6 +636,7 @@ _OnNotify proc
     xor     edx, edx
     lea     rcx, lv_text_buf
     call    ConfigSavePath
+    call    ConfigLoad
 
 @on_cp_refresh:
     call    RefreshLists
@@ -659,6 +663,7 @@ _OnNotify proc
     je      @on_ret                         ; state didn't change (selection/focus change) — ignore
 
     mov     r12d, dword ptr [rsi + NMIA_iItem]
+    mov     edi, eax                        ; preserve new checkbox state across helper calls
     ; eax contains the new state: LVCHECKED(2000h) or LVUNCHECKED(1000h)
 
     ; Which LV?
@@ -674,7 +679,7 @@ _OnNotify proc
     mov     rcx, g_hwndLvTrusted
     call    _LvGetItemText
 
-    cmp     eax, LVCHECKED
+    cmp     edi, LVCHECKED
     je      @on_ic_trust_enable
 
     ; Disable: save data=0 to registry, remove from driver
@@ -709,6 +714,7 @@ _OnNotify proc
     lea     rcx, lv_text_buf
     call    IoctlAddTrusted
     call    CloseDevice
+    call    ConfigLoad
 
 @on_ic_trust_done:
     jmp     @on_ret
@@ -756,6 +762,7 @@ _OnNotify proc
     mov     edx, r14d
     lea     rcx, lv_text_buf
     call    ConfigSavePath
+    call    ConfigLoad
     jmp     @on_ic_path_done
 
 @on_ic_path_enable:
@@ -788,6 +795,7 @@ _OnNotify proc
     mov     edx, r14d
     lea     rcx, lv_text_buf
     call    ConfigSavePath
+    call    ConfigLoad
 
 @on_ic_path_done:
 @on_ret:
@@ -951,6 +959,7 @@ _OnCommand proc
     jmp     @oc_rem_path_loop
 
 @oc_rem_path_done:
+    call    ConfigLoad                      ; rebuild list after per-item removals
     call    RefreshLists
     jmp     @oc_done
 
@@ -1050,6 +1059,7 @@ _OnCommand proc
     call    SetWindowTextW              ; clear edit box after successful add
 @oc_add_trusted_close:
     call    CloseDevice
+    call    ConfigLoad                      ; rebuild complete trusted list
     call    RefreshLists
     jmp     @oc_done
 
@@ -1071,6 +1081,7 @@ _OnCommand proc
     test    eax, eax
     jz      @oc_done                ; cancelled / nothing added
 
+    call    ConfigLoad
     call    RefreshLists
     jmp     @oc_done
 

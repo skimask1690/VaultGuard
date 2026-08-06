@@ -6,7 +6,9 @@
 
 param(
     [switch]$KeepOutput,
-    [switch]$SkipEnforcement   # skip driver enforcement sections 14-16
+    [switch]$SkipEnforcement,  # skip driver enforcement sections 14-16
+    [ValidatePattern('^[A-Za-z]:$')]
+    [string]$TestDrive = 'X:'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,9 +25,10 @@ $script:Lines = [System.Collections.Generic.List[string]]::new()
 # test dirs
 $PA  = "C:\temp\vg_test_a"
 $PB  = "C:\temp\vg_test_b"
-$DR  = "D:\"
-$DS  = "D:\vg_test_sub"
-$DE  = "D:\vg_enforce"
+$DR  = "$TestDrive\"
+$DS  = Join-Path $DR 'vg_test_sub'
+$DE  = Join-Path $DR 'vg_enforce'
+$RootTestFile = Join-Path $DR 'vg_root_test.txt'
 
 # -- output --------------------------------------------------------------------
 
@@ -63,6 +66,13 @@ function reg_trusted { Get-ItemProperty "HKCU:\Software\VG\Trusted" -EA Silently
 function clean_registry {
     Remove-Item "HKCU:\Software\VG\Paths"   -Recurse -Force -EA SilentlyContinue
     Remove-Item "HKCU:\Software\VG\Trusted" -Recurse -Force -EA SilentlyContinue
+    # The driver IOCTLs are full-list SET operations. Deleting registry values
+    # alone leaves the previous in-memory rules active, so synchronize an empty
+    # configuration whenever the driver is already running.
+    $svc = Get-Service -Name 'clrcd' -EA SilentlyContinue
+    if ($null -ne $svc -and $svc.Status -eq 'Running' -and (Test-Path $VG)) {
+        vg @('/protection', 'on') | Out-Null
+    }
 }
 
 function reg_key_names([object]$reg) {
@@ -412,73 +422,73 @@ if ($tr3.Count -eq 1 -and $tr3[0] -eq 'totalcmd64.exe') {
 }
 
 # ==============================================================================
-banner "[11] D:\ root drive  -  registry round-trip"
+banner "[11] $DR root drive  -  registry round-trip"
 # ==============================================================================
 
 if (-not $hasDrive) {
-    1..5 | ForEach-Object { skip_test "D:\ not available" }
+    1..5 | ForEach-Object { skip_test "$DR not available" }
 } else {
     clean_registry
 
     vg @("/setitem", $DR, "Hidden") | Out-Null
     $r = reg_paths; $v = if ($null -ne $r) { $r.$DR } else { $null }
-    if ($null -ne $v -and ($v -band 0x1)) { ok "D:\ setitem Hidden:       0x1" } else { fail "D:\ setitem Hidden: v=$v" }
+    if ($null -ne $v -and ($v -band 0x1)) { ok "$DR setitem Hidden:       0x1" } else { fail "$DR setitem Hidden: v=$v" }
 
     vg @("/setitem", $DR, "Locked") | Out-Null
     $r = reg_paths; $v = if ($null -ne $r) { $r.$DR } else { $null }
-    if ($null -ne $v -and ($v -band 0x2)) { ok "D:\ setitem Locked:       0x2" } else { fail "D:\ setitem Locked: v=$v" }
+    if ($null -ne $v -and ($v -band 0x2)) { ok "$DR setitem Locked:       0x2" } else { fail "$DR setitem Locked: v=$v" }
 
     vg @("/setitem", $DR, "Read-only") | Out-Null
     $r = reg_paths; $v = if ($null -ne $r) { $r.$DR } else { $null }
-    if ($null -ne $v -and ($v -band 0x4)) { ok "D:\ setitem Read-only:    0x4" } else { fail "D:\ setitem Read-only: v=$v" }
+    if ($null -ne $v -and ($v -band 0x4)) { ok "$DR setitem Read-only:    0x4" } else { fail "$DR setitem Read-only: v=$v" }
 
     vg @("/setitem", $DR, "No-execution") | Out-Null
     $r = reg_paths; $v = if ($null -ne $r) { $r.$DR } else { $null }
-    if ($null -ne $v -and ($v -band 0x8)) { ok "D:\ setitem No-execution: 0x8" } else { fail "D:\ setitem No-execution: v=$v" }
+    if ($null -ne $v -and ($v -band 0x8)) { ok "$DR setitem No-execution: 0x8" } else { fail "$DR setitem No-execution: v=$v" }
 
     vg @("/setitem", $DR, "Disabled") | Out-Null
     $r = reg_paths; $v = if ($null -ne $r) { $r.$DR } else { $null }
-    if ($null -ne $v -and $v -eq 0) { ok "D:\ setitem Disabled:     flags=0" } else { fail "D:\ setitem Disabled: v=$v" }
+    if ($null -ne $v -and $v -eq 0) { ok "$DR setitem Disabled:     flags=0" } else { fail "$DR setitem Disabled: v=$v" }
 
     clean_registry
 }
 
 # ==============================================================================
-banner "[12] D:\vg_test_sub  -  registry round-trip"
+banner "[12] $DS  -  registry round-trip"
 # ==============================================================================
 
 if (-not $hasDrive) {
-    1..5 | ForEach-Object { skip_test "D:\ not available" }
+    1..5 | ForEach-Object { skip_test "$DR not available" }
 } else {
     vg @("/setitem", $DS, "Hidden") | Out-Null
     $r = reg_paths; $v = if ($null -ne $r) { $r.$DS } else { $null }
-    if ($null -ne $v -and ($v -band 0x1)) { ok "D:\vg_test_sub Hidden:       0x1" } else { fail "D:\vg_test_sub Hidden: v=$v" }
+    if ($null -ne $v -and ($v -band 0x1)) { ok "$DS Hidden:       0x1" } else { fail "$DS Hidden: v=$v" }
 
     vg @("/setitem", $DS, "Locked") | Out-Null
     $r = reg_paths; $v = if ($null -ne $r) { $r.$DS } else { $null }
-    if ($null -ne $v -and ($v -band 0x2)) { ok "D:\vg_test_sub Locked:       0x2" } else { fail "D:\vg_test_sub Locked: v=$v" }
+    if ($null -ne $v -and ($v -band 0x2)) { ok "$DS Locked:       0x2" } else { fail "$DS Locked: v=$v" }
 
     vg @("/setitem", $DS, "Read-only") | Out-Null
     $r = reg_paths; $v = if ($null -ne $r) { $r.$DS } else { $null }
-    if ($null -ne $v -and ($v -band 0x4)) { ok "D:\vg_test_sub Read-only:    0x4" } else { fail "D:\vg_test_sub Read-only: v=$v" }
+    if ($null -ne $v -and ($v -band 0x4)) { ok "$DS Read-only:    0x4" } else { fail "$DS Read-only: v=$v" }
 
     vg @("/setitem", $DS, "No-execution") | Out-Null
     $r = reg_paths; $v = if ($null -ne $r) { $r.$DS } else { $null }
-    if ($null -ne $v -and ($v -band 0x8)) { ok "D:\vg_test_sub No-execution: 0x8" } else { fail "D:\vg_test_sub No-execution: v=$v" }
+    if ($null -ne $v -and ($v -band 0x8)) { ok "$DS No-execution: 0x8" } else { fail "$DS No-execution: v=$v" }
 
     vg @("/setitem", $DS, "Disabled") | Out-Null
     $r = reg_paths; $v = if ($null -ne $r) { $r.$DS } else { $null }
-    if ($null -ne $v -and $v -eq 0) { ok "D:\vg_test_sub Disabled:     flags=0" } else { fail "D:\vg_test_sub Disabled: v=$v" }
+    if ($null -ne $v -and $v -eq 0) { ok "$DS Disabled:     flags=0" } else { fail "$DS Disabled: v=$v" }
 
     clean_registry
 }
 
 # ==============================================================================
-banner "[13] D:\ in /enumitems CSV"
+banner "[13] $DR in /enumitems CSV"
 # ==============================================================================
 
 if (-not $hasDrive) {
-    1..4 | ForEach-Object { skip_test "D:\ not available" }
+    1..4 | ForEach-Object { skip_test "$DR not available" }
 } else {
     clean_registry
     vg @("/setitem", $DR, "Locked")    | Out-Null
@@ -488,25 +498,25 @@ if (-not $hasDrive) {
     vg @("/enumitems", $csv7) | Out-Null
 
     $rows7 = csv_rows $csv7
-    if ($rows7.Count -eq 2) { ok "enumitems D: 2 rows"                        } else { fail "enumitems D: $($rows7.Count) rows (expected 2)" }
+    if ($rows7.Count -eq 2) { ok "enumitems $TestDrive 2 rows"                        } else { fail "enumitems $TestDrive $($rows7.Count) rows (expected 2)" }
 
     $rDR = @($rows7 | Where-Object { $_ -match [regex]::Escape($DR) })
-    if ($rDR.Count -gt 0 -and $rDR[0] -match '0,1,0,0') { ok "enumitems: D:\ Locked=1 in CSV" } else { fail "enumitems: D:\ row: $($rDR -join '|')" }
+    if ($rDR.Count -gt 0 -and $rDR[0] -match '0,1,0,0') { ok "enumitems: $DR Locked=1 in CSV" } else { fail "enumitems: $DR row: $($rDR -join '|')" }
 
     $rDS = @($rows7 | Where-Object { $_ -match [regex]::Escape($DS) })
-    if ($rDS.Count -gt 0 -and $rDS[0] -match '0,0,1,0') { ok "enumitems: D:\vg_test_sub ReadOnly=1 in CSV" } else { fail "enumitems: D:\vg_test_sub row: $($rDS -join '|')" }
+    if ($rDS.Count -gt 0 -and $rDS[0] -match '0,0,1,0') { ok "enumitems: $DS ReadOnly=1 in CSV" } else { fail "enumitems: $DS row: $($rDS -join '|')" }
 
     clean_registry
 }
 
 # ==============================================================================
-banner "[14] Driver enforcement  -  Read-only on D:\vg_enforce"
+banner "[14] Driver enforcement  -  Read-only on $DE"
 # ==============================================================================
 
 $runEnforce = (-not $SkipEnforcement) -and $hasDrive -and (driver_loaded)
 
 if (-not $runEnforce) {
-    $why = if ($SkipEnforcement) { '-SkipEnforcement flag' } elseif (-not $hasDrive) { 'D:\ missing' } else { 'driver not running' }
+    $why = if ($SkipEnforcement) { '-SkipEnforcement flag' } elseif (-not $hasDrive) { "$DR missing" } else { 'driver not running' }
     1..7 | ForEach-Object { skip_test "enforcement skipped ($why)" }
 } else {
     # Create test dir with a file to try deleting
@@ -554,7 +564,7 @@ if (-not $runEnforce) {
 }
 
 # ==============================================================================
-banner "[15] Driver enforcement  -  Locked on D:\vg_enforce"
+banner "[15] Driver enforcement  -  Locked on $DE"
 # ==============================================================================
 
 if (-not $runEnforce) {
@@ -597,7 +607,7 @@ if (-not $runEnforce) {
 }
 
 # ==============================================================================
-banner "[16] Driver enforcement  -  Read-only on D:\ root"
+banner "[16] Driver enforcement  -  Read-only on $DR root"
 # ==============================================================================
 
 if (-not $runEnforce) {
@@ -609,22 +619,22 @@ if (-not $runEnforce) {
     vg @("/protection", "on")           | Out-Null
     vg @("/setitem", $DR, "Read-only")  | Out-Null
 
-    # Write to D:\ root must fail
-    expect_denied "D:\ Read-only: New-Item D:\vg_root_test.txt" {
-        New-Item -Path "D:\vg_root_test.txt" -ItemType File -Force -EA Stop
+    # Write to the isolated test-volume root must fail
+    expect_denied "$DR Read-only: New-Item $RootTestFile" {
+        New-Item -Path $RootTestFile -ItemType File -Force -EA Stop
     }
 
-    # Read from D:\ root must still work
-    expect_allowed "D:\ Read-only: Get-ChildItem D:\" {
+    # Reading/listing the selected test-volume root must still work
+    expect_allowed "$DR Read-only: Get-ChildItem $DR" {
         Get-ChildItem -Path $DR -EA Stop
     }
 
     # Disable -> write must succeed
     vg @("/setitem", $DR, "Disabled") | Out-Null
-    expect_allowed "D:\ Read-only lifted: New-Item D:\vg_root_test.txt" {
-        New-Item -Path "D:\vg_root_test.txt" -ItemType File -Force -EA Stop
+    expect_allowed "$DR Read-only lifted: New-Item $RootTestFile" {
+        New-Item -Path $RootTestFile -ItemType File -Force -EA Stop
     }
-    Remove-Item "D:\vg_root_test.txt" -Force -EA SilentlyContinue
+    Remove-Item $RootTestFile -Force -EA SilentlyContinue
 
     restore_trusted $savedTrusted
     clean_registry

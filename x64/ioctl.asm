@@ -127,6 +127,134 @@ IoctlGetStatus proc
 IoctlGetStatus endp
 
 ; ==============================================================================
+; IoctlBuildPathRecord
+;   rcx = destination VG_PATH_RECORD (VG_PATH_RECORD_SIZE bytes)
+;   edx = protection flags
+;   r8  = DOS path (PWSTR)
+; Returns eax=1/0.  This only marshals one record; it does not issue an IOCTL.
+; ==============================================================================
+PUBLIC IoctlBuildPathRecord
+IoctlBuildPathRecord proc
+    push    rbx
+    push    rsi
+    push    rdi
+    push    r12
+    sub     rsp, 28h
+
+    mov     r12, rcx                    ; destination record
+    mov     ebx, edx                    ; flags
+    mov     rsi, r8                     ; DOS path
+
+    mov     rdi, r12
+    xor     eax, eax
+    mov     ecx, VG_PATH_RECORD_SIZE / 8
+    rep     stosq
+    mov     ecx, (VG_PATH_RECORD_SIZE MOD 8) / 4
+    rep     stosd
+
+    mov     dword ptr [r12], ebx
+    movzx   eax, word ptr [rsi]
+    mov     word ptr [str_drive], ax
+
+    mov     r8d, 400h                   ; first record field is 0x800 bytes
+    lea     rdx, [r12 + 4]
+    lea     rcx, str_drive
+    call    QueryDosDeviceW
+    test    eax, eax
+    jz      @ibpr_fail
+
+    lea     rdx, [rsi + 4]              ; suffix after "C:"
+    lea     rcx, [r12 + 4]
+    call    wcscat_p
+
+    lea     rcx, [r12 + 4]
+    call    wcslen_p
+    test    eax, eax
+    jz      @ibpr_ok
+    dec     eax
+    cmp     word ptr [r12 + 4 + rax*2], '\'
+    jne     @ibpr_ok
+    mov     word ptr [r12 + 4 + rax*2], 0
+
+@ibpr_ok:
+    mov     eax, 1
+    jmp     @ibpr_ret
+@ibpr_fail:
+    xor     eax, eax
+@ibpr_ret:
+    add     rsp, 28h
+    pop     r12
+    pop     rdi
+    pop     rsi
+    pop     rbx
+    ret
+IoctlBuildPathRecord endp
+
+; ==============================================================================
+; IoctlSendPathBuffer  rcx=records  edx=byte count  -> rax=1/0
+; The driver treats IOCTL_VG_ADD_PATH as replacement of the complete path list.
+; ==============================================================================
+PUBLIC IoctlSendPathBuffer
+IoctlSendPathBuffer proc
+    push    rbx
+    push    rsi
+    sub     rsp, 48h
+
+    mov     rbx, rcx
+    mov     esi, edx
+    mov     qword ptr [rsp+38h], 0
+    lea     r10, [rsp+3Ch]
+    mov     qword ptr [rsp+30h], r10
+    mov     dword ptr [rsp+28h], 0
+    mov     qword ptr [rsp+20h], 0
+    mov     r9d, esi
+    mov     r8, rbx
+    mov     edx, IOCTL_VG_ADD_PATH
+    mov     rcx, g_hDevice
+    call    DeviceIoControl
+    test    eax, eax
+    setnz   al
+    movzx   eax, al
+
+    add     rsp, 48h
+    pop     rsi
+    pop     rbx
+    ret
+IoctlSendPathBuffer endp
+
+; ==============================================================================
+; IoctlSendTrustedBuffer  rcx=records  edx=byte count  -> rax=1/0
+; The driver treats IOCTL_VG_ADD_TRUSTED as replacement of the complete list.
+; ==============================================================================
+PUBLIC IoctlSendTrustedBuffer
+IoctlSendTrustedBuffer proc
+    push    rbx
+    push    rsi
+    sub     rsp, 48h
+
+    mov     rbx, rcx
+    mov     esi, edx
+    mov     qword ptr [rsp+38h], 0
+    lea     r10, [rsp+3Ch]
+    mov     qword ptr [rsp+30h], r10
+    mov     dword ptr [rsp+28h], 0
+    mov     qword ptr [rsp+20h], 0
+    mov     r9d, esi
+    mov     r8, rbx
+    mov     edx, IOCTL_VG_ADD_TRUSTED
+    mov     rcx, g_hDevice
+    call    DeviceIoControl
+    test    eax, eax
+    setnz   al
+    movzx   eax, al
+
+    add     rsp, 48h
+    pop     rsi
+    pop     rbx
+    ret
+IoctlSendTrustedBuffer endp
+
+; ==============================================================================
 ; IoctlAddPath  rcx=flags(BYTE)  rdx=path(PWSTR)  ?  rax=1/0
 ; Original driver protocol:
 ;   DWORD flags

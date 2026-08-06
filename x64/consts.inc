@@ -38,6 +38,7 @@ VG_TE_NAMELEN               EQU 0           ; WORD  NameLengthBytes
 VG_TE_NAME                  EQU 2           ; WCHAR Name[]
 VG_TRUSTED_RECORD_SIZE      EQU 0D94h       ; fixed trusted record size in clrcdsp.dat
 VG_TRUSTED_RECORD_NAME      EQU 4           ; WCHAR process image name starts here
+VG_PATH_RECORD_SIZE         EQU 01404h      ; DWORD flags + 0x800 + 0x800 + 0x400 byte fields
 
 ; VG_SET_ACTIVE offset
 VG_SA_ACTIVE                EQU 0           ; BYTE  Active (1/0)
@@ -57,7 +58,7 @@ VG_ER_ENTRIES               EQU 8           ; entries follow
 ; Buffers
 VG_IOCTL_BUF_SIZE           EQU 65536       ; 64 KB for enum replies
 VG_PATH_MAX_CHARS           EQU 32767       ; UNICODE_STRING max
-VG_ORIG_PATH_INPUT_SIZE     EQU 06414h      ; original VaultGuard.exe fixed path IOCTL input
+VG_ORIG_PATH_INPUT_SIZE     EQU 06414h      ; 5 * VG_PATH_RECORD_SIZE
 
 ; ------------------------------------------------------------------------------
 ; SERVICE CONTROL MANAGER
@@ -211,7 +212,7 @@ WM_SETREDRAW                EQU 000Bh
 WM_SETTINGCHANGE            EQU 001Ah
 
 ; ListView notifications (NM_ = 0-...)
-LVN_ITEMCHANGED             EQU 0FFFFFEA1h  ; -351 as DWORD
+LVN_ITEMCHANGED             EQU 0FFFFFF9Bh  ; LVN_FIRST(-100) - 1 = -101
 NM_DBLCLK                   EQU 0FFFFFFFDh  ; -3
 NM_CLICK                    EQU 0FFFFFFFEh  ; -2
 ; LVM_FIRST = 0x1000 = 4096.  All offsets below are decimal (LVM_FIRST + N).

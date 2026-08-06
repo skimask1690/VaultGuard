@@ -20,6 +20,7 @@ EXTRN SendMessageW              :PROC
 EXTRN SetTimer                  :PROC
 EXTRN DragAcceptFiles           :PROC
 EXTRN ChangeWindowMessageFilterEx :PROC
+EXTRN GetDpiForWindow            :PROC
 EXTRN ShowProcPicker            :PROC   ; procpicker.asm
 EXTRN GuiExportConfig           :PROC   ; impexp.asm
 EXTRN GuiImportConfig           :PROC   ; impexp.asm
@@ -121,6 +122,13 @@ _OnCreate proc
     mov     rbx, rcx            ; hwnd
     mov     g_hwndMain, rbx
 
+    ; Per-monitor DPI, used to scale every 96-DPI-design control coordinate
+    ; below. r13d is unused elsewhere in this proc and callee-saved, so it
+    ; survives every call between here and the last CreateWindowExW.
+    mov     rcx, rbx
+    call    GetDpiForWindow
+    mov     r13d, eax
+
     ; Init common controls
     lea     rcx, icc_ex
     call    InitCommonControlsEx
@@ -175,10 +183,30 @@ _OnCreate proc
     mov     qword ptr [rsp+50h], r14
     mov     qword ptr [rsp+48h], IDC_BTN_TOGGLE
     mov     qword ptr [rsp+40h], rbx
-    mov     dword ptr [rsp+38h], 26
-    mov     dword ptr [rsp+30h], 178
-    mov     dword ptr [rsp+28h], 8
-    mov     dword ptr [rsp+20h], 182
+    mov     eax, 26
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+38h], eax
+    mov     eax, 178
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+30h], eax
+    mov     eax, 8
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+28h], eax
+    mov     eax, 182
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+20h], eax
     mov     r9d, STY_BUTTON
     lea     r8, str_btn_toggle_off
     lea     rdx, str_buttoncls
@@ -195,10 +223,30 @@ _OnCreate proc
     mov     qword ptr [rsp+50h], r14
     mov     qword ptr [rsp+48h], IDC_STATIC_PATHS_HDR
     mov     qword ptr [rsp+40h], rbx
-    mov     dword ptr [rsp+38h], 22
-    mov     dword ptr [rsp+30h], 157
-    mov     dword ptr [rsp+28h], 10
-    mov     dword ptr [rsp+20h], 20
+    mov     eax, 22
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+38h], eax
+    mov     eax, 157
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+30h], eax
+    mov     eax, 10
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+28h], eax
+    mov     eax, 20
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+20h], eax
     mov     r9d, STY_STATIC
     lea     r8, str_hdr_paths
     lea     rdx, str_staticcls
@@ -214,10 +262,30 @@ _OnCreate proc
     mov     qword ptr [rsp+50h], r14
     mov     qword ptr [rsp+48h], IDC_BTN_ADD_PATH
     mov     qword ptr [rsp+40h], rbx
-    mov     dword ptr [rsp+38h], 26
-    mov     dword ptr [rsp+30h], 136
-    mov     dword ptr [rsp+28h], 8
-    mov     dword ptr [rsp+20h], 364
+    mov     eax, 26
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+38h], eax
+    mov     eax, 136
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+30h], eax
+    mov     eax, 8
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+28h], eax
+    mov     eax, 364
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+20h], eax
     mov     r9d, STY_BUTTON
     lea     r8, str_btn_add_path
     lea     rdx, str_buttoncls
@@ -233,10 +301,30 @@ _OnCreate proc
     mov     qword ptr [rsp+50h], r14
     mov     qword ptr [rsp+48h], IDC_BTN_REM_PATH
     mov     qword ptr [rsp+40h], rbx
-    mov     dword ptr [rsp+38h], 26
-    mov     dword ptr [rsp+30h], 139
-    mov     dword ptr [rsp+28h], 8
-    mov     dword ptr [rsp+20h], 504
+    mov     eax, 26
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+38h], eax
+    mov     eax, 139
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+30h], eax
+    mov     eax, 8
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+28h], eax
+    mov     eax, 504
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+20h], eax
     mov     r9d, STY_BUTTON
     lea     r8, str_btn_restore
     lea     rdx, str_buttoncls
@@ -252,10 +340,30 @@ _OnCreate proc
     mov     qword ptr [rsp+50h], r14
     mov     qword ptr [rsp+48h], IDC_LV_PATHS
     mov     qword ptr [rsp+40h], rbx
-    mov     dword ptr [rsp+38h], 220
-    mov     dword ptr [rsp+30h], 624
-    mov     dword ptr [rsp+28h], 40
-    mov     dword ptr [rsp+20h], 20
+    mov     eax, 220
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+38h], eax
+    mov     eax, 624
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+30h], eax
+    mov     eax, 40
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+28h], eax
+    mov     eax, 20
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+20h], eax
     mov     r9d, (WS_CHILD_VISIBLE + LVS_REPORT + LVS_SHOWSELALWAYS)
     xor     r8d, r8d
     lea     rdx, str_listviewcls
@@ -271,32 +379,58 @@ _OnCreate proc
     call    SendMessageW
 
     ; Columns: Path(300) Hidden(80) Locked(80) Read-only(80) No run(80)  total=620=client
+    ; Width computed into r8d BEFORE edx=index below, since idiv clobbers edx.
     mov     r9, offset str_col_path
-    mov     r8d, 300
+    mov     eax, 300
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     r8d, eax
     xor     edx, edx
     mov     rcx, g_hwndLvPaths
     call    _LvAddColumn
 
     mov     r9, offset str_col_h
-    mov     r8d, 80
+    mov     eax, 80
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     r8d, eax
     mov     edx, 1
     mov     rcx, g_hwndLvPaths
     call    _LvAddColumn
 
     mov     r9, offset str_col_l
-    mov     r8d, 80
+    mov     eax, 80
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     r8d, eax
     mov     edx, 2
     mov     rcx, g_hwndLvPaths
     call    _LvAddColumn
 
     mov     r9, offset str_col_r
-    mov     r8d, 80
+    mov     eax, 80
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     r8d, eax
     mov     edx, 3
     mov     rcx, g_hwndLvPaths
     call    _LvAddColumn
 
     mov     r9, offset str_col_x
-    mov     r8d, 80
+    mov     eax, 80
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     r8d, eax
     mov     edx, 4
     mov     rcx, g_hwndLvPaths
     call    _LvAddColumn
@@ -307,10 +441,30 @@ _OnCreate proc
     mov     qword ptr [rsp+50h], r14
     mov     qword ptr [rsp+48h], IDC_STATIC_TRUSTED_HDR
     mov     qword ptr [rsp+40h], rbx
-    mov     dword ptr [rsp+38h], 22
-    mov     dword ptr [rsp+30h], 158
-    mov     dword ptr [rsp+28h], 278
-    mov     dword ptr [rsp+20h], 20
+    mov     eax, 22
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+38h], eax
+    mov     eax, 158
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+30h], eax
+    mov     eax, 278
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+28h], eax
+    mov     eax, 20
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+20h], eax
     mov     r9d, STY_STATIC
     lea     r8, str_hdr_trusted
     lea     rdx, str_staticcls
@@ -326,10 +480,30 @@ _OnCreate proc
     mov     qword ptr [rsp+50h], r14
     mov     qword ptr [rsp+48h], IDC_EDIT_TRUSTED
     mov     qword ptr [rsp+40h], rbx
-    mov     dword ptr [rsp+38h], 26
-    mov     dword ptr [rsp+30h], 178
-    mov     dword ptr [rsp+28h], 276
-    mov     dword ptr [rsp+20h], 182
+    mov     eax, 26
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+38h], eax
+    mov     eax, 178
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+30h], eax
+    mov     eax, 276
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+28h], eax
+    mov     eax, 182
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+20h], eax
     mov     r9d, (WS_CHILD_VISIBLE + WS_TABSTOP + ES_AUTOHSCROLL)
     lea     r8, str_proc_hint
     lea     rdx, str_editcls
@@ -346,10 +520,30 @@ _OnCreate proc
     mov     qword ptr [rsp+50h], r14
     mov     qword ptr [rsp+48h], IDC_BTN_ADD_TRUSTED
     mov     qword ptr [rsp+40h], rbx
-    mov     dword ptr [rsp+38h], 26
-    mov     dword ptr [rsp+30h], 70
-    mov     dword ptr [rsp+28h], 276
-    mov     dword ptr [rsp+20h], 364
+    mov     eax, 26
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+38h], eax
+    mov     eax, 70
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+30h], eax
+    mov     eax, 276
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+28h], eax
+    mov     eax, 364
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+20h], eax
     mov     r9d, STY_BUTTON
     lea     r8, str_btn_add_proc
     lea     rdx, str_buttoncls
@@ -365,10 +559,30 @@ _OnCreate proc
     mov     qword ptr [rsp+50h], r14
     mov     qword ptr [rsp+48h], IDC_BTN_ADD_RUNNING
     mov     qword ptr [rsp+40h], rbx
-    mov     dword ptr [rsp+38h], 26
-    mov     dword ptr [rsp+30h], 110
-    mov     dword ptr [rsp+28h], 276
-    mov     dword ptr [rsp+20h], 440
+    mov     eax, 26
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+38h], eax
+    mov     eax, 110
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+30h], eax
+    mov     eax, 276
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+28h], eax
+    mov     eax, 440
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+20h], eax
     mov     r9d, STY_BUTTON
     lea     r8, str_btn_add_running
     lea     rdx, str_buttoncls
@@ -384,10 +598,30 @@ _OnCreate proc
     mov     qword ptr [rsp+50h], r14
     mov     qword ptr [rsp+48h], IDC_BTN_REM_TRUSTED
     mov     qword ptr [rsp+40h], rbx
-    mov     dword ptr [rsp+38h], 26
-    mov     dword ptr [rsp+30h], 87
-    mov     dword ptr [rsp+28h], 276
-    mov     dword ptr [rsp+20h], 556
+    mov     eax, 26
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+38h], eax
+    mov     eax, 87
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+30h], eax
+    mov     eax, 276
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+28h], eax
+    mov     eax, 556
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+20h], eax
     mov     r9d, STY_BUTTON
     lea     r8, str_btn_remove_proc
     lea     rdx, str_buttoncls
@@ -403,10 +637,30 @@ _OnCreate proc
     mov     qword ptr [rsp+50h], r14
     mov     qword ptr [rsp+48h], IDC_LV_TRUSTED
     mov     qword ptr [rsp+40h], rbx
-    mov     dword ptr [rsp+38h], 140
-    mov     dword ptr [rsp+30h], 624
-    mov     dword ptr [rsp+28h], 308
-    mov     dword ptr [rsp+20h], 20
+    mov     eax, 140
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+38h], eax
+    mov     eax, 624
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+30h], eax
+    mov     eax, 308
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+28h], eax
+    mov     eax, 20
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+20h], eax
     mov     r9d, (WS_CHILD_VISIBLE + LVS_REPORT + LVS_SHOWSELALWAYS)
     xor     r8d, r8d
     lea     rdx, str_listviewcls
@@ -423,7 +677,12 @@ _OnCreate proc
 
     ; Column: Process name (620)
     mov     r9, offset str_col_process
-    mov     r8d, 620
+    mov     eax, 620
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     r8d, eax
     xor     edx, edx
     mov     rcx, g_hwndLvTrusted
     call    _LvAddColumn
@@ -434,10 +693,30 @@ _OnCreate proc
     mov     qword ptr [rsp+50h], r14
     mov     qword ptr [rsp+48h], IDC_BTN_EXPORT
     mov     qword ptr [rsp+40h], rbx
-    mov     dword ptr [rsp+38h], 22
-    mov     dword ptr [rsp+30h], 90
-    mov     dword ptr [rsp+28h], 454
-    mov     dword ptr [rsp+20h], 20
+    mov     eax, 22
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+38h], eax
+    mov     eax, 90
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+30h], eax
+    mov     eax, 454
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+28h], eax
+    mov     eax, 20
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+20h], eax
     mov     r9d, STY_BUTTON
     lea     r8, str_btn_export
     lea     rdx, str_buttoncls
@@ -453,10 +732,30 @@ _OnCreate proc
     mov     qword ptr [rsp+50h], r14
     mov     qword ptr [rsp+48h], IDC_BTN_IMPORT
     mov     qword ptr [rsp+40h], rbx
-    mov     dword ptr [rsp+38h], 22
-    mov     dword ptr [rsp+30h], 90
-    mov     dword ptr [rsp+28h], 454
-    mov     dword ptr [rsp+20h], 115
+    mov     eax, 22
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+38h], eax
+    mov     eax, 90
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+30h], eax
+    mov     eax, 454
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+28h], eax
+    mov     eax, 115
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+20h], eax
     mov     r9d, STY_BUTTON
     lea     r8, str_btn_import
     lea     rdx, str_buttoncls
@@ -472,10 +771,30 @@ _OnCreate proc
     mov     qword ptr [rsp+50h], r14
     mov     qword ptr [rsp+48h], IDC_STATIC_AUTHOR
     mov     qword ptr [rsp+40h], rbx
-    mov     dword ptr [rsp+38h], 18
-    mov     dword ptr [rsp+30h], 624
-    mov     dword ptr [rsp+28h], 482
-    mov     dword ptr [rsp+20h], 20
+    mov     eax, 18
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+38h], eax
+    mov     eax, 624
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+30h], eax
+    mov     eax, 482
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+28h], eax
+    mov     eax, 20
+    imul    eax, r13d
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    mov     dword ptr [rsp+20h], eax
     mov     r9d, STY_STATIC_CENTER
     lea     r8, str_author
     lea     rdx, str_staticcls

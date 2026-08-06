@@ -31,6 +31,7 @@ EXTRN wcs_ascii_lower_inplace   :PROC   ; strutil.asm
 EXTRN RefreshLists              :PROC   ; listview.asm
 EXTRN ConfigSavePath            :PROC   ; config.asm
 EXTRN ConfigSaveTrusted         :PROC   ; config.asm
+EXTRN ConfigLoad                :PROC   ; config.asm
 EXTRN EnsureDriverReady         :PROC   ; device.asm
 EXTRN CloseDevice               :PROC   ; device.asm
 EXTRN IoctlAddTrusted           :PROC   ; ioctl.asm
@@ -314,6 +315,7 @@ _OnDropFiles proc
     mov     rcx, rdi
     call    ConfigSaveTrusted
     call    CloseDevice
+    call    ConfigLoad                  ; rebuild complete trusted list
     call    RefreshLists
 
 @odf_finish:

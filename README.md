@@ -158,6 +158,8 @@ flowchart TD
 
 Flags combine as a bitmask: `Hidden + Locked = 0x03`, `Hidden + Locked + Read-only = 0x07`, etc.
 
+Overlapping path rules are cumulative in the driver. Their registry/UI order is not precedence: a disabled child cannot create an allow exception beneath a protected parent.
+
 ---
 
 ## GUI Reference
@@ -208,6 +210,8 @@ Dark Mode and Mica backdrop follow the system theme automatically via `WM_SETTIN
 
 Processes in this list bypass all driver protections — Hidden/Locked/Read-only rules do not apply to them.
 
+Trust is global. The current driver does not expose an application-to-folder mapping, so a trusted process is trusted for every protected path.
+
 | Control | Behavior |
 |---------|----------|
 | **Edit box** | Enter process executable name (e.g. `totalcmd64.exe`) |
@@ -249,7 +253,7 @@ vg.exe /uninstall
 | `/?` `-h` `--help` | Print help to stdout | `vg.exe /?` |
 | `/protection on\|off` | Enable or disable global protection | `vg.exe /protection on` |
 | `/setitem <path> <mode>` | Set protection flags for a path | `vg.exe /setitem "C:\Data" Locked` |
-| `/settrusted <name> <state>` | Add or remove a trusted process | `vg.exe /settrusted cmd.exe Enabled` |
+| `/settrusted <name> <state>` | Add or remove a trusted process; full paths are reduced to a lowercase basename and `.exe` is appended when missing | `vg.exe /settrusted C:\Tools\CMD Enabled` |
 | `/enumitems <file.csv>` | Export protected paths as UTF-16LE CSV | `vg.exe /enumitems out.csv` |
 | `/enumtrusted <file.csv>` | Export trusted processes as UTF-16LE CSV | `vg.exe /enumtrusted trust.csv` |
 | `/tray` | Start minimized to system tray | `vg.exe /tray` |
@@ -445,7 +449,7 @@ flowchart TD
     OD2 --> IOCTL
     IOCTL --> IAP[IoctlAddPath flags + NT path]
     IAP --> QDD[QueryDosDeviceW C: → Device/HarddiskVolumeN]
-    QDD --> DIO[DeviceIoControl 0x9C402400, buf 0x6414 bytes]
+    QDD --> DIO[DeviceIoControl 0x9C402400, packed buffer >= 0x6414 bytes]
     DIO --> CSP[ConfigSavePath: HKCU/Software/VG/Paths/path = REG_DWORD flags]
     CSP --> HIDE[Folder disappears from Explorer / returns ACCESS_DENIED]
 
@@ -458,14 +462,14 @@ Reverse-engineered IOCTL codes for `vg.sys`:
 
 | IOCTL | Code | Notes |
 |-------|------|-------|
-| `IOCTL_VG_ADD_PATH` | `0x9C402400` | flags=0 → Disabled; `nInBufSize` fixed at `0x6414` |
+| `IOCTL_VG_ADD_PATH` | `0x9C402400` | Replaces the complete path list; record size `0x1404`; original five-record input is `0x6414` bytes |
 | `IOCTL_VG_ENUM_PATHS` | `0x9C402404` | |
-| `IOCTL_VG_ADD_TRUSTED` | `0x9C402408` | record size `0xD94`, process name at `+4` |
+| `IOCTL_VG_ADD_TRUSTED` | `0x9C402408` | Replaces the complete trusted list; record size `0xD94`, process name at `+4` |
 | `IOCTL_VG_REMOVE_TRUSTED` | `0x9C402408` | empty input (`size=0`) clears entire list |
 | `IOCTL_VG_ENUM_TRUSTED` | `0x9C40240C` | |
 | `IOCTL_VG_SET_ACTIVE` | `0x9C40241C` | DWORD (4 bytes) |
 | `IOCTL_VG_GET_STATUS` | `0x9C402420` | 16-byte `VG_STATUS` struct |
-| `IOCTL_VG_CLEAR_ALL` | `0x9C402424` | Full reset |
+| `IOCTL_VG_CLEAR_ALL` | `0x9C402424` | Undocumented reset operation; not used for normal list synchronization |
 
 Device path: `\\.\BE79F7D853E643089D51EDCDA79805C4`
 
@@ -486,7 +490,7 @@ HKEY_CURRENT_USER\Software\VG\
     "explorer.exe"      REG_DWORD  0x00000001
 ```
 
-`ConfigLoad` enumerates both keys and reloads the full configuration into the driver.
+`ConfigLoad` enumerates both keys, packs all active records, and submits each complete list in one IOCTL. The SET-style IOCTLs replace their list rather than appending one record. For an empty path list it sends a syntactically valid system-drive record with `flags=0`; a completely zero-filled input is accepted by the driver but does not reliably remove its final in-memory path.
 The driver holds no persistent state across reboots.
 
 ---
@@ -704,7 +708,7 @@ totalcmd64.exe=1
 
 | Procedure | Description |
 |-----------|-------------|
-| `ConfigLoad` | Enumerates `Paths` → `IoctlAddPath` each; enumerates `Trusted` → `IoctlAddTrusted` each; calls `IoctlSetActive(1)` |
+| `ConfigLoad` | Enumerates both registry keys, packs every active path/trusted record, then submits one complete buffer per list; uses a valid `flags=0` sentinel for an empty path list |
 | `ConfigSavePath(rcx=path, rdx=flags)` | `RegCreateKeyExW` → `RegSetValueExW(path, flags)` |
 | `ConfigRemovePath(rcx=path)` | `RegOpenKeyExW` → `RegDeleteValueW` |
 | `ConfigSaveTrusted(rcx=name_lowercase)` | `RegCreateKeyExW` → `RegSetValueExW(name, 1)` |
@@ -805,24 +809,33 @@ Intermediates (`*.obj`, `*.res`, `*.pdb`) are deleted on completion.
 ## Regression Tests
 
 `tests/cli_test.ps1` — **84 regression checks**, CLI interface only, no GUI required.  
-Requires `bin\vg.exe` and Administrator context; the script installs/starts/removes `clrcd` as needed.
+Requires `bin\vg.exe`, Administrator context, and an isolated NTFS test volume. The script installs/starts/removes `clrcd` as needed and performs a full uninstall check.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File tests\cli_test.ps1
+powershell -ExecutionPolicy Bypass -File tests\cli_test.ps1 -TestDrive X:
 # -KeepOutput   preserves CSV output files in tests\out\
 ```
 
+Never point `-TestDrive` at a system/data volume: the suite deliberately applies protection to the volume root. A temporary NTFS VHD mounted as `X:` is the recommended target.
+
 | Group | Tests | What is verified |
 |-------|-------|-----------------|
-| Help | 1 | `/?` output on stdout |
+| Help | 6 | `/?` output and command list |
+| Driver lifecycle | 14 | install/start/stop/uninstall and Manual/Auto start modes |
 | setitem flags | 4 | Each flag individually → registry value |
-| setitem Disabled | 1 | Path in registry with value 0 |
-| enumitems CSV | 3 | File content, rows, flag bits |
-| settrusted + enumtrusted | 4 | Registry and CSV |
-| settrusted Disabled | 2 | Entry removed; second entry unaffected |
-| protection on/off | 2 | Exit code 0; bad argument → exit code 1 |
-| error cases | 3 | Missing args, bad mode → exit code 1 |
-| registry consistency | 13 | Remove-one-trusted: remaining entry survives |
+| setitem Disabled/overwrite | 4 | Inactive value 0 and last-mode-wins persistence |
+| enumitems CSV | 7 | File content, rows, flag bits, disabled entries |
+| settrusted + enumtrusted | 12 | Registry/CSV and remove-one-keeps-other behavior |
+| protection/error cases | 6 | on/off and invalid argument exit codes |
+| Test-volume round trip | 13 | Root/subfolder flags and CSV on the selected volume |
+| Driver enforcement | 14 | Read-only/Locked behavior and lifting protection |
+| Full uninstall | 4 | Services, driver, and registry are removed |
+
+`tests/rule_collision_test.ps1 -TestDrive X:` adds **55 enforcement checks** covering the last-rule transition, seven simultaneous paths, six trusted names, reversed update order, same-basename executables, an executable that is both protected and trusted, parent/child collisions, `No-execution`, global on/off, and driver restart persistence.
+
+`tests/gui_sync_test.ps1` drives the native window controls and verifies the complete-list synchronization regression: disabling one path keeps the other path active, disabling one trusted process keeps the other trusted process active, and adding a third process preserves the existing entry. It requires an empty `HKCU\Software\VG` configuration and a stopped `clrcd`; test-owned state is removed afterward.
+
+`tests/driver_protocol_probe.ps1` is the destructive driver-level protocol probe used to confirm SET/replace semantics, the valid zero-flags empty-list transition, overlapping-path behavior, trusted-record layout, and global trust. It refuses to run while `clrcd` is already active.
 
 All tests capture output via `Start-Process -RedirectStandardOutput`, which exercises the `WriteConsoleW → WriteFile ANSI fallback` path in `WideWriteConsole`.
 
@@ -837,6 +850,9 @@ All tests capture output via `Start-Process -RedirectStandardOutput`, which exer
 | Password mode | `/p` is parsed and silently ignored; driver has no password enforcement |
 | Light mode | GUI works in light mode; ListView colors fall back to system defaults |
 | Trusted list removal | No per-item IOCTL — driver only supports clearing the entire list, requiring a full reload cycle |
+| Scoped trust | Trusted executable basenames are global; every copy with the same filename is trusted for every protected path, and the driver cannot bind an application to selected folders |
+| Protected trusted executable | A trusted executable stored inside a Locked/No-execution path cannot bootstrap itself because the untrusted launcher must open the image first; after its own path is accessible, its process-name trust applies normally |
+| Nested exceptions | Path rules are cumulative; a disabled child does not override protection inherited from a matching parent |
 | Multi-file drop | Only the first dropped file/folder is processed per `WM_DROPFILES`; multi-file drops discard all but the first |
 | Service + GUI | In service mode the full GUI is active; no headless/service-only mode |
 
@@ -872,7 +888,10 @@ VaultGuard/
 │   ├── vg.rc           ICON 101 + RCDATA 102 (both = ICON/vg.ico)
 │   └── vg.manifest     requireAdministrator, Win11 GUID, perMonitorV2
 ├── tests/
-│   └── cli_test.ps1    CLI, driver lifecycle, registry, CSV, enforcement, uninstall tests
+│   ├── cli_test.ps1              84 CLI, lifecycle, registry, enforcement, and uninstall checks
+│   ├── rule_collision_test.ps1   55 path/trusted collision and restart checks
+│   ├── gui_sync_test.ps1         Native GUI ListView synchronization checks
+│   └── driver_protocol_probe.ps1 Raw IOCTL semantics and layout probe
 ├── IcoBuilder/
 │   ├── vg.sys          Third-party driver — PROMOSOFT CORPORATION (2014)
 │   └── vg.ico          Base icon (ICO header used as CAB wrapper)

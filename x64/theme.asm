@@ -18,6 +18,7 @@ include globals.inc
 
 EXTRN DwmSetWindowAttribute     :PROC
 EXTRN CreateFontW               :PROC
+EXTRN GetDpiForWindow           :PROC
 EXTRN SendMessageW              :PROC
 EXTRN RegOpenKeyExW             :PROC
 EXTRN RegQueryValueExW          :PROC
@@ -195,6 +196,15 @@ CreateFonts proc
     push    rsi
     sub     rsp, 78h
 
+    ; Per-monitor DPI, used to scale the two hardcoded font heights below --
+    ; without this the fonts stay a fixed pixel size while the (now
+    ; DPI-scaled) controls around them grow, throwing off the proportions.
+    ; Stashed at [rsp+70h], inside the existing 78h allocation but past the
+    ; highest offset (68h) CreateFontW's own arg block uses.
+    mov     rcx, g_hwndMain
+    call    GetDpiForWindow
+    mov     dword ptr [rsp+70h], eax
+
     ; Segoe UI 18pt bold — main labels
     lea     rax, str_fontname
     mov     qword ptr [rsp+68h], rax    ; lpszFace
@@ -210,7 +220,14 @@ CreateFonts proc
     xor     r9d, r9d                    ; cOrientation
     xor     r8d, r8d                    ; cEscapement
     xor     edx, edx                    ; cWidth
-    mov     ecx, -18                    ; cHeight (negative = char height)
+    mov     eax, 18
+    imul    eax, dword ptr [rsp+70h]
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    neg     eax
+    mov     ecx, eax                    ; cHeight (negative = char height), DPI-scaled
+    xor     edx, edx                    ; cWidth = 0; idiv left its remainder in EDX
     call    CreateFontW
     mov     g_hFontMain, rax
 
@@ -229,7 +246,14 @@ CreateFonts proc
     xor     r9d, r9d
     xor     r8d, r8d
     xor     edx, edx
-    mov     ecx, -14
+    mov     eax, 14
+    imul    eax, dword ptr [rsp+70h]
+    mov     ecx, 96
+    cdq
+    idiv    ecx
+    neg     eax
+    mov     ecx, eax
+    xor     edx, edx                    ; cWidth = 0; idiv left its remainder in EDX
     call    CreateFontW
     mov     g_hFontSmall, rax
 
